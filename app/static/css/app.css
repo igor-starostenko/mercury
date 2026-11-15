@@ -1,0 +1,134 @@
+/* Mercury — shared dashboard styles */
+:root {
+  --bg: #0f1115;
+  --panel: #161a22;
+  --panel-2: #1d2330;
+  --text: #e6e8ee;
+  --muted: #8a90a2;
+  --accent: #4f8cff;
+  --spend: #ff6b6b;
+  --income: #38c172;
+  --border: #262c3a;
+  --radius: 12px;
+}
+* { box-sizing: border-box; }
+html { color-scheme: dark; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px; line-height: 1.45;
+}
+a { color: var(--accent); text-decoration: none; }
+
+/* ---------------------------------------------------------------- header */
+header {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 10px 24px;
+  background: rgba(15, 17, 21, .92);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand .mark {
+  width: 30px; height: 30px; border-radius: 8px; flex: none;
+  background: linear-gradient(135deg, #4f8cff, #7b5cff);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 15px; color: #fff;
+}
+.brand h1 { font-size: 16px; margin: 0; font-weight: 650; letter-spacing: .01em; }
+.brand .sub { color: var(--muted); font-size: 11.5px; margin-top: 1px; }
+nav { display: flex; gap: 2px; margin-left: 10px; }
+nav a {
+  padding: 6px 12px; border-radius: 8px;
+  color: var(--muted); font-size: 13px; font-weight: 500;
+}
+nav a:hover { color: var(--text); background: var(--panel-2); }
+nav a.active { color: var(--text); background: var(--panel-2); }
+.header-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+button, select {
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 7px 12px; font-size: 13px; cursor: pointer; font-family: inherit;
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover { filter: brightness(1.12); }
+
+/* ----------------------------------------------------------------- layout */
+main { padding: 22px 24px 48px; max-width: 1240px; margin: 0 auto; }
+.section { margin-bottom: 24px; }
+.section-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.section-head h2 {
+  font-size: 12.5px; margin: 0; font-weight: 650;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+}
+.section-head .hint { color: var(--muted); font-size: 12px; opacity: .75; }
+
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }
+.panel.tight { padding: 0; overflow: hidden; }
+.panel canvas { max-height: 340px; }
+
+.toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.toolbar label { color: var(--muted); font-size: 13px; }
+.toolbar .spacer { flex: 1; }
+
+/* ------------------------------------------------------------------ cards */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+.card.clickable { cursor: pointer; transition: border-color .15s, transform .12s; }
+.card.clickable:hover { border-color: var(--accent); transform: translateY(-1px); }
+.card .label { color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
+.card .value { font-size: 22px; font-weight: 650; margin-top: 5px; font-variant-numeric: tabular-nums; }
+.card .value.spend { color: var(--spend); }
+.card .value.income { color: var(--income); }
+.card .row { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; padding: 3px 0; color: var(--muted); }
+.card .row b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* ----------------------------------------------------------------- tables */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+thead th { color: var(--muted); font-weight: 500; text-transform: uppercase; font-size: 10.5px; letter-spacing: .04em; }
+tbody tr:last-child td { border-bottom: none; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.neg { color: var(--spend); }
+.pos { color: var(--income); }
+.desc { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 20px; background: var(--panel-2); color: var(--muted); }
+.empty { color: var(--muted); text-align: center; padding: 26px; margin: 0; }
+.cat-select { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; font-size: 12px; }
+
+/* ------------------------------------------------- category table + drill */
+.cat-table tr.drill-row { cursor: pointer; }
+.cat-table tr.drill-row:hover { background: rgba(79, 140, 255, .06); }
+.chev { display: inline-block; width: 16px; color: var(--muted); transition: transform .15s; font-size: 11px; }
+tr.open .chev { transform: rotate(90deg); color: var(--accent); }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; vertical-align: baseline; }
+.share-bar { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+.share-bar i { display: block; height: 100%; border-radius: 3px; }
+tr.detail-row > td { background: #12151c; padding: 0; }
+.detail-wrap { padding: 10px 14px 14px; }
+.detail-head { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+.detail-wrap table td, .detail-wrap table th { padding: 6px 10px; }
+
+/* ------------------------------------------------------------ toast/modal */
+.toast {
+  position: fixed; bottom: 20px; right: 20px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  padding: 12px 18px; border-radius: 10px; font-size: 13px;
+  opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 80;
+}
+.toast.show { opacity: 1; }
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); display: none; align-items: center; justify-content: center; z-index: 60; }
+.modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; min-width: 480px; max-width: 92vw; max-height: 80vh; overflow: auto; box-shadow: 0 16px 48px rgba(0, 0, 0, .45); }
+.modal h2 { margin: 0 0 12px; font-size: 16px; }
+.modal .err { color: var(--spend); }
+.modal-foot { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+.modal-foot span { flex: 1; color: var(--muted); font-size: 13px; }
+
+@media (max-width: 860px) {
+  header { padding: 10px 14px; }
+  main { padding: 16px 14px 40px; }
+  .desc { max-width: 220px; }
+}

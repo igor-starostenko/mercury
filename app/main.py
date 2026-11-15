@@ -9,12 +9,14 @@ nothing is scanned from disk in the background.
 from __future__ import annotations
 
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import duckdb
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import ingest, analytics, llm
@@ -23,6 +25,7 @@ DB_PATH = ingest.DB_PATH
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 MAX_UPLOAD_FILES = 200
+MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 
 
 def get_con() -> duckdb.DuckDBPyConnection:
@@ -92,14 +95,47 @@ def summary():
 
 
 @app.get("/api/monthly")
-def monthly():
+def monthly(year: str | None = None):
+    """Spend/income by month, all time or one calendar year."""
     con = get_con()
     try:
         return {
-            "spend": analytics.monthly_spend(con),
-            "income": analytics.income_by_month(con),
-            "by_category": analytics.spend_by_category_month(con),
+            "spend": analytics.monthly_spend(con, year),
+            "income": analytics.income_by_month(con, year),
+            "by_category": analytics.spend_by_category_month(con, year),
         }
+    finally:
+        con.close()
+
+
+@app.get("/api/year-totals")
+def year_totals():
+    """Per-year income/spend/net totals (home page year cards)."""
+    con = get_con()
+    try:
+        return analytics.year_totals(con)
+    finally:
+        con.close()
+
+
+@app.get("/api/weekly")
+def weekly(month: str = ""):
+    """Spend/income per calendar week (Mon–Sun) within one month."""
+    if not MONTH_RE.match(month):
+        raise HTTPException(status_code=400, detail="month must be YYYY-MM")
+    con = get_con()
+    try:
+        return analytics.weekly_breakdown(con, month)
+    finally:
+        con.close()
+
+
+@app.get("/api/periods")
+def periods():
+    """Years and months present in the data, for page selectors."""
+    con = get_con()
+    try:
+        return analytics.available_periods(con)
     finally:
         con.close()
 
@@ -171,11 +207,12 @@ def classify():
 
 @app.get("/api/transactions")
 def transactions(year: str | None = None, month: str | None = None,
-                 limit: int = 1000):
-    """Individual transactions for a date range (newest first)."""
+                 category: str | None = None, limit: int = 1000):
+    """Individual transactions for a date range (newest first),
+    optionally one normalized category."""
     con = get_con()
     try:
-        return analytics.transactions(con, year, month, limit)
+        return analytics.transactions(con, year, month, category, limit)
     finally:
         con.close()
 
@@ -191,6 +228,19 @@ def standard_categories():
 @app.get("/")
 def index():
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/year")
+def year_page():
+    return FileResponse(STATIC_DIR / "year.html")
+
+
+@app.get("/month")
+def month_page():
+    return FileResponse(STATIC_DIR / "month.html")
+
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/api/health")

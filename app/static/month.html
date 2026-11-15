@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mercury — Month</title>
+<link rel="stylesheet" href="/static/css/app.css" />
+<script src="/static/vendor/chart.umd.min.js"></script>
+<script src="/static/js/common.js"></script>
+<script src="/static/js/ui.js"></script>
+</head>
+<body>
+<div id="site-header"></div>
+<main>
+  <section class="section">
+    <div class="toolbar">
+      <label for="monthSel">Month</label>
+      <select id="monthSel"></select>
+      <span class="spacer"></span>
+      <a href="/" style="color:var(--muted);font-size:13px">← back to overview</a>
+    </div>
+  </section>
+
+  <div class="panel" id="emptyHint" style="display:none;margin-bottom:24px">
+    <h2 style="margin:0 0 8px;font-size:16px">No transactions yet</h2>
+    <p style="color:var(--muted);margin:0">Import bank CSVs from the top bar, then come back here.</p>
+  </div>
+
+  <section class="section">
+    <div class="cards" id="monthCards"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Weekly cash flow</h2>
+      <span class="hint" id="chartHint"></span>
+    </div>
+    <div class="panel"><canvas id="flowChart"></canvas></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Spend by category</h2>
+      <span class="hint">this month · click a row to drill down</span>
+    </div>
+    <div class="panel tight" id="catTable"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>All transactions</h2>
+      <span class="badge" id="txnCount"></span>
+      <span class="hint">newest first</span>
+    </div>
+    <div class="panel tight" id="txnTable"></div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+<div id="modal-root"></div>
+
+<script>
+let curMonth = '';
+
+window.onDataChanged = () => renderMonth(curMonth);
+
+/* Calendar weeks (Mon–Sun) overlapping the month, clipped to it.
+ * Returns [{week: 'YYYY-MM-DD' (Monday), label: 'Sep 1–7', ...}]. */
+function monthWeeks(month) {
+  const [y, m] = month.split('-').map(Number);
+  const first = Date.UTC(y, m - 1, 1);
+  const last = Date.UTC(y, m - 1, 0); // 0th of next month = last day of m
+  let start = first;
+  start -= ((new Date(first).getUTCDay() + 6) % 7) * 86400000; // back to Monday
+  const out = [];
+  const f = ms => { const d = new Date(ms); return MONTHS_SHORT[d.getUTCMonth()] + ' ' + d.getUTCDate(); };
+  while (start <= last) {
+    const end = start + 6 * 86400000;
+    const a = Math.max(start, first);
+    const b = Math.min(end, last);
+    out.push({ week: new Date(start).toISOString().slice(0, 10),
+               label: a === b ? f(a) : f(a) + '–' + f(b) });
+    start += 7 * 86400000;
+  }
+  return out;
+}
+
+async function renderMonth(month) {
+  curMonth = month;
+  const [weekly, cats, txns] = await Promise.all([
+    api('/api/weekly?month=' + encodeURIComponent(month)),
+    api('/api/categories?month=' + encodeURIComponent(month)),
+    api('/api/transactions?month=' + encodeURIComponent(month) + '&limit=5000'),
+  ]);
+
+  // Summary cards from the complete weekly aggregates.
+  const income = weekly.reduce((a, w) => a + w.income, 0);
+  const spend = weekly.reduce((a, w) => a + w.spend, 0);
+  const net = income - spend;
+  const rate = income > 0 ? (net / income * 100).toFixed(1) + '%' : '—';
+  $id('monthCards').innerHTML = [
+    ['Income', fmtMoney(income), 'income'],
+    ['Spent', fmtMoney(spend), 'spend'],
+    ['Net', fmtMoney(net), net >= 0 ? 'income' : 'spend'],
+    ['Savings rate', rate, ''],
+  ].map(([l, v, c]) =>
+    `<div class="card"><div class="label">${l} · ${monthLong(month)}</div><div class="value ${c}">${v}</div></div>`).join('');
+
+  // Weekly chart: merge calendar buckets with the API rows.
+  const weeks = monthWeeks(month);
+  const byWeek = Object.fromEntries(weekly.map(w => [w.week, w]));
+  makeFlowChart($id('flowChart'),
+    weeks.map(w => w.label),
+    weeks.map(w => (byWeek[w.week] || {}).spend || 0),
+    weeks.map(w => (byWeek[w.week] || {}).income || 0));
+  $id('chartHint').textContent = `${monthLong(month)} · Mon–Sun weeks, clipped to the month`;
+
+  renderCategoryTable($id('catTable'), cats, { month });
+
+  $id('txnCount').textContent = txns.length + ' transactions';
+  $id('txnTable').innerHTML = txnTableHTML(txns);
+  wireCategorySelects($id('txnTable'));
+  setRangeSub(monthLong(month));
+}
+
+(async function init() {
+  CATS = await api('/api/standard-categories');
+  renderChrome('month');
+  const periods = await api('/api/periods');
+  if (!periods.months.length) {
+    $id('emptyHint').style.display = 'block';
+    return;
+  }
+  const sel = $id('monthSel');
+  // Newest first.
+  sel.innerHTML = periods.months.slice().reverse()
+    .map(m => `<option value="${m}">${monthLabel(m)}</option>`).join('');
+  const requested = getParam('month');
+  sel.value = requested && periods.months.includes(requested)
+    ? requested : periods.months[periods.months.length - 1];
+  sel.onchange = () => location.href = '/month?month=' + sel.value;
+  try {
+    await renderMonth(sel.value);
+  } catch (e) {
+    toast('Failed to load: ' + e.message, 8000);
+  }
+})();
+</script>
+</body>
+</html>
