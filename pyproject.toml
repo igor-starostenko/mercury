@@ -1,5 +1,5 @@
 [project]
-name = "familyfinance"
+name = "mercury"
 version = "0.1.0"
 description = "Local family finance dashboard: FastAPI + DuckDB. Runs on localhost, no cloud."
 requires-python = ">=3.12"
@@ -8,6 +8,7 @@ dependencies = [
     "fastapi==0.163.0",
     "uvicorn==0.54.0",
     "pydantic==2.14.3",
+    "python-multipart>=0.0.33",
 ]
 
 [tool.uv]

@@ -1,23 +1,21 @@
-"""Family Finance - local personal finance planner.
+"""Mercury - local personal finance planner.
 
 Standardizes CSV extracts from multiple institutions into a single DuckDB
-table, deduplicates overlapping date ranges, and serves a static-ish web UI
+table, deduplicates overlapping extracts, and serves a static-ish web UI
 for spend analytics.
 
 Run:
     .venv/bin/python -m app.main
 
-Input CSVs are read from a configurable folder (see INPUT_DIR below). By
-default that is the user's real extracts folder:
-    /Users/pneuma/Documents/Important/Finances
-You can override it with the FF_INPUT_DIR environment variable, e.g.:
-    FF_INPUT_DIR=/somewhere/else .venv/bin/python -m app.main
+Data enters exclusively through uploads: the UI sends bank CSVs (single
+files or a whole folder) to POST /api/upload, which merges them into the
+table by stable key. Nothing is scanned from disk in the background.
 """
 from __future__ import annotations
 
 import csv
-import os
 import re
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, date
 from pathlib import Path
@@ -29,28 +27,7 @@ import duckdb
 # Paths
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"            # sample extracts live here
-DB_PATH = BASE_DIR / "familyfinance.duckdb"
-
-# Where the user drops their bank CSV exports. The default points at the real
-# extracts folder; FF_INPUT_DIR overrides it. Falls back to the local sample
-# folder if the configured path doesn't exist yet.
-DEFAULT_INPUT_DIR = "/Users/pneuma/Documents/Important/Finances"
-SAMPLE_INPUT_DIR = DATA_DIR / "extracts"
-
-
-def _resolve_input_dir() -> Path:
-    configured = os.environ.get("FF_INPUT_DIR", "").strip()
-    if configured:
-        p = Path(configured).expanduser()
-        return p
-    if Path(DEFAULT_INPUT_DIR).is_dir():
-        return Path(DEFAULT_INPUT_DIR)
-    return SAMPLE_INPUT_DIR
-
-
-INPUT_DIR = _resolve_input_dir()
-INPUT_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = BASE_DIR / "mercury.duckdb"
 
 
 # ---------------------------------------------------------------------------
@@ -384,89 +361,67 @@ CREATE_TABLE_SQL = """
 """
 
 
-def load_all(con: duckdb.DuckDBPyConnection) -> int:
-    """Import every CSV in INPUT_DIR into the transactions table.
+def parse_file_bytes(name: str, data: bytes
+                     ) -> tuple[list[Txn], Optional[str], Optional[str]]:
+    """Parse one uploaded CSV.
 
-    Rebuilds the table from scratch so repeated imports are idempotent.
-    Returns the number of (deduplicated) transactions stored.
+    The parser is chosen from the filename (same rules as detect_parser),
+    so uploads must be named like bank exports, e.g. "WF-Checking.csv" or
+    "chase_2025-10_to_2025-12.csv".
+
+    Returns (txns, source, error): on success error is None and source is
+    the institution name; on failure txns is empty and error says why.
     """
-    INPUT_DIR.mkdir(parents=True, exist_ok=True)
-    files = sorted(p for p in INPUT_DIR.iterdir()
-                   if p.suffix.lower() in (".csv", ".txt"))
-    txns: list[Txn] = []
-    for path in files:
-        hit = detect_parser(path)
-        if hit is None:
-            print(f"  ! skipping {path.name} (no known format)")
-            continue
-        fn, source = hit
-        parsed = fn(path, source)
-        print(f"  {path.name}: {len(parsed)} rows from {source}")
-        txns.extend(parsed)
-
-    if not txns:
-        # Nothing found in the input folder: make sure the table exists but
-        # NEVER wipe what's already there (an empty folder is not an empty
-        # account). Returns 0 so the API reports "imported: 0".
-        con.execute(CREATE_TABLE_SQL)
-        return 0
-
-    _rebuild(con, txns)
-    return con.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
+    hit = detect_parser(Path(name))
+    if hit is None:
+        return [], None, "no known format in filename"
+    fn, source = hit
+    # The parsers take a path (they infer the account from the filename),
+    # so stage the bytes in a temp file under the original name.
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / f"{Path(name).stem or 'upload'}.csv"
+        p.write_bytes(data)
+        try:
+            return fn(p, source), source, None
+        except Exception as e:  # one malformed file must not sink the batch
+            return [], source, f"parse error: {e}"
 
 
-def _rebuild(con: duckdb.DuckDBPyConnection, txns: list[Txn]) -> None:
+def merge_txns(con: duckdb.DuckDBPyConnection,
+               txns: list[Txn]) -> tuple[int, int]:
+    """Merge parsed transactions into the table by stable key.
+
+    Rows whose key already exists (from any earlier upload) are skipped, so
+    existing rows — including manual/LLM categories — are never touched.
+    Uploads are idempotent: re-sending the same file adds nothing.
+    Returns (total_rows, new_rows).
+    """
     con.execute(CREATE_TABLE_SQL)
-    # Keep an existing classification if we re-import the same transaction.
-    existing: dict[str, str] = {}
-    try:
-        has_rows = con.execute(
-            "SELECT COUNT(*) FROM transactions").fetchone()[0]
-    except duckdb.Error:
-        has_rows = 0
-    if has_rows > 0:
-        for k, cat, classified in con.execute(
-                "SELECT key, category, classified FROM transactions").fetchall():
-            if classified and cat:
-                existing[k] = cat
-
-    # One transaction: a failure mid-rebuild must never leave the table
-    # empty behind (DuckDB 2.x raises on an empty executemany).
-    con.execute("BEGIN TRANSACTION")
-    try:
-        con.execute("DELETE FROM transactions")
-        if txns:
+    existing = {k for (k,) in con.execute(
+        "SELECT key FROM transactions").fetchall()}
+    seen: set[str] = set()
+    new: list[Txn] = []
+    for t in txns:
+        if t.key not in existing and t.key not in seen:
+            seen.add(t.key)
+            new.append(t)
+    if new:
+        # Continue the id sequence; ids from earlier rebuilds/merges are
+        # unique, so MAX(id)+1 is safe.
+        max_id = con.execute(
+            "SELECT COALESCE(MAX(id), 0) FROM transactions").fetchone()[0]
+        # One transaction: a mid-merge failure must not lose rows that
+        # were already in the table.
+        con.execute("BEGIN TRANSACTION")
+        try:
             con.executemany(
                 "INSERT INTO transactions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                [[i, t.source, t.account, t.date, t.amount, t.description,
-                  # Re-import must keep a manually-assigned category
-                  # (see the snapshot above) instead of clobbering it.
-                  existing.get(t.key, t.category),
-                  t.raw_category, t.currency, t.key,
-                  t.key in existing or bool(t.category)]
-                 for i, t in enumerate(txns, start=1)])
-
-        # Deduplicate: keep one row per key.
-        con.execute("""
-            CREATE OR REPLACE TABLE transactions AS
-            SELECT * FROM (
-                SELECT *, ROW_NUMBER() OVER (
-                    PARTITION BY key
-                    ORDER BY id
-                ) AS rn
-                FROM transactions
-            ) t
-            WHERE rn = 1
-        """)
-        con.execute("ALTER TABLE transactions RENAME TO _dedup")
-        con.execute("""
-            CREATE OR REPLACE TABLE transactions AS
-            SELECT id, source, account, txn_date, amount, description,
-                   category, raw_category, currency, key, classified
-            FROM _dedup
-        """)
-        con.execute("DROP TABLE _dedup")
-        con.execute("COMMIT")
-    except Exception:
-        con.execute("ROLLBACK")
-        raise
+                [[max_id + i, t.source, t.account, t.date, t.amount,
+                  t.description, t.category, t.raw_category, t.currency,
+                  t.key, bool(t.category)]
+                 for i, t in enumerate(new, start=1)])
+            con.execute("COMMIT")
+        except Exception:
+            con.execute("ROLLBACK")
+            raise
+    return con.execute("SELECT COUNT(*) FROM transactions").fetchone()[0], len(new)
