@@ -56,13 +56,21 @@
 </head>
 <body>
 <header>
-  <h1>Family Finance</h1>
+  <h1>Mercury</h1>
   <span class="sub" id="range"></span>
   <span style="flex:1"></span>
+  <button onclick="pickFiles()">Import CSV files</button>
+  <button onclick="pickFolder()">Import folder</button>
   <button class="primary" onclick="classify()">Classify unknown (LLM)</button>
-  <button onclick="reimport()">Re-import CSVs</button>
+  <input type="file" id="filePick" accept=".csv,.txt" multiple hidden onchange="uploadFiles(this.files)">
+  <input type="file" id="folderPick" webkitdirectory hidden onchange="uploadFiles(this.files)">
 </header>
 <main>
+  <div class="panel wide" id="emptyHint" style="display:none;text-align:center;padding:28px">
+    <h2 style="margin-top:0">No transactions yet</h2>
+    <p style="color:var(--muted)">Use <b>Import CSV files</b> or <b>Import folder</b> in the top bar to load your bank
+    exports (Wells Fargo, Chase, Apple Card, US Bank). Files are matched by filename — keep the bank's original names.</p>
+  </div>
   <div class="cards" id="cards"></div>
 
   <div class="toolbar">
@@ -104,26 +112,44 @@ let monthlyData = { spend: [], income: [], by_category: [] };
 let state = { year: '', month: '' };
 
 function fmt(n){ return '$' + Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2}); }
-function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
-  setTimeout(()=>t.classList.remove('show'), 2500); }
+function toast(msg, ms=2500){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), ms); }
 
-async function j(url, opt){ const r = await fetch(url, opt); return r.json(); }
+async function j(url, opt){ const r = await fetch(url, opt); if (!r.ok) {
+  let d=''; try { d=(await r.json()).detail||''; } catch(e){} 
+  throw new Error(d || r.status); } return r.json(); }
 
 async function classify(){
   toast('Classifying…');
-  const res = await j('/api/classify', {method:'POST'});
-  toast(`Classified ${res.classified} of ${res.of}`);
+  try {
+    const res = await j('/api/classify', {method:'POST'});
+    toast(`Classified ${res.classified} of ${res.of}`);
+  } catch (e) { toast('Classify failed: ' + e.message, 6000); }
   refresh();
 }
-async function reimport(){
-  toast('Re-importing…');
-  const res = await j('/api/reimport', {method:'POST'});
-  toast(`Imported ${res.imported} transactions`);
+function pickFiles(){ const i=document.getElementById('filePick'); i.value=''; i.click(); }
+function pickFolder(){ const i=document.getElementById('folderPick'); i.value=''; i.click(); }
+async function uploadFiles(list){
+  const files = [...(list||[])].filter(f => /\.(csv|txt)$/i.test(f.name));
+  if (!files.length) { toast('No CSV files in that selection', 4000); return; }
+  const fd = new FormData();
+  files.forEach(f => fd.append('files', f));
+  toast(`Importing ${files.length} file${files.length>1?'s':''}…`, 120000);
+  try {
+    const res = await j('/api/upload', {method:'POST', body: fd});
+    const skipped = res.files.filter(f=>f.error).map(f=>f.name);
+    let msg = `Imported ${res.imported} new transaction${res.imported===1?'':'s'} · ${res.total} total`;
+    if (skipped.length) msg += ` · skipped: ${skipped.join(', ')}`;
+    toast(msg, 8000);
+  } catch (e) {
+    toast('Import failed: ' + e.message, 8000);
+  }
   refresh();
 }
 
 async function loadCards(){
   const s = await j('/api/summary');
+  document.getElementById('emptyHint').style.display = s.n_transactions ? 'none' : 'block';
   document.getElementById('range').textContent =
     s.first_date ? `${s.first_date} → ${s.last_date} · ${s.n_accounts} accounts · ${s.n_sources} institutions` : '';
   const c = document.getElementById('cards');
