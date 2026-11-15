@@ -7,18 +7,21 @@ on a localhost port — no cloud, no accounts.
 ## Setup
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+uv sync   # creates .venv from the locked versions in uv.lock
 ```
 
 ## Run
 
 ```bash
-.venv/bin/python -m app.main
+uv run python -m app.main
 # → http://127.0.0.1:8000
 ```
 
 Bind/host configurable via `FF_HOST` / `FF_PORT`.
+
+Dependencies are pinned in `pyproject.toml` and fully locked (including
+transitive deps) in `uv.lock` — commit both. Update with `uv add pkg` /
+`uv lock --upgrade`, then `uv sync`.
 
 ### Data
 
@@ -30,7 +33,7 @@ and populated automatically on first request.
 - `POST /api/reimport` — idempotent rebuild from the CSV folder. An empty
   folder is a no-op (`{"imported": 0}`) and never wipes existing data.
   Manual/LLM-assigned categories survive re-imports.
-- `python3 generate_samples.py` — regenerates synthetic sample CSVs in
+- `uv run python generate_samples.py` — regenerates synthetic sample CSVs in
   `app/data/extracts/` (no real data is stored in this repo).
 
 ### Classification
