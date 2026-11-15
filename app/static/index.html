@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Family Finance</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel-2: #1e2330;
+    --text: #e6e8ee; --muted: #8a90a2; --accent: #4f8cff;
+    --spend: #ff6b6b; --income: #38c172; --border: #262c3a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 18px 28px; border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 20px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  main { padding: 24px 28px; max-width: 1200px; margin: 0 auto; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap: 14px; margin-bottom: 24px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .card .value { font-size: 24px; font-weight: 600; margin-top: 6px; }
+  .card .value.spend { color: var(--spend); }
+  .card .value.income { color: var(--income); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+  .panel h2 { font-size: 15px; margin: 0 0 14px; font-weight: 600; }
+  .panel.wide { grid-column: 1 / -1; }
+  canvas { max-height: 320px; }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+  button, select {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 14px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; text-transform: uppercase; font-size: 11px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .neg { color: var(--spend); } .pos { color: var(--income); }
+  .cat-select { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
+  .badge { display:inline-block; font-size:11px; padding:2px 8px; border-radius:20px; background:var(--panel-2); color:var(--muted); }
+  .toast { position: fixed; bottom: 20px; right: 20px; background: var(--panel-2); border:1px solid var(--border);
+           padding: 12px 18px; border-radius: 10px; opacity: 0; transition: opacity .3s; pointer-events:none; }
+  .toast.show { opacity: 1; }
+  @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Family Finance</h1>
+  <span class="sub" id="range"></span>
+  <span style="flex:1"></span>
+  <button class="primary" onclick="classify()">Classify unknown (LLM)</button>
+  <button onclick="reimport()">Re-import CSVs</button>
+</header>
+<main>
+  <div class="cards" id="cards"></div>
+
+  <div class="toolbar">
+    <label style="color:var(--muted);font-size:13px">Filter</label>
+    <select id="yearSel" onchange="state.year=this.value; state.month=''; refresh()"></select>
+    <select id="monthSel" onchange="state.month=this.value; refresh()"></select>
+    <button onclick="clearFilter()">Clear filter</button>
+  </div>
+
+  <div class="grid">
+    <div class="panel wide"><h2>Monthly spend (click a bar to view its transactions)</h2><canvas id="monthlyChart"></canvas></div>
+    <div class="panel"><h2>Spend by category</h2><canvas id="catChart"></canvas></div>
+    <div class="panel"><h2>Category trend over time</h2><canvas id="trendChart"></canvas></div>
+    <div class="panel wide"><h2>Accounts</h2><div id="accounts"></div></div>
+    <div class="panel wide">
+      <h2 id="txnTitle">Transactions <span class="badge" id="txnCount"></span></h2>
+      <div id="txn"></div>
+    </div>
+    <div class="panel wide">
+      <h2>Uncategorized transactions <span class="badge" id="unknownCount"></span></h2>
+      <div id="unknown"></div>
+    </div>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const CAT_COLORS = {
+  Groceries:'#4f8cff', Dining:'#ff9f43', Transportation:'#54a0ff',
+  Housing:'#a55eea', Utilities:'#26de81', Subscriptions:'#ff6b6b',
+  Entertainment:'#feca57', Shopping:'#48dbfb', Travel:'#1dd1a1',
+  Health:'#576574', Insurance:'#c8d6e5', Investing:'#6ab04c',
+  Income:'#38c172', Fees:'#b33939', Transfers:'#8a90a2', Other:'#57606f',
+  Uncategorized:'#8a90a2'
+};
+
+let standardCategories = [];
+let monthlyData = { spend: [], income: [], by_category: [] };
+let state = { year: '', month: '' };
+
+function fmt(n){ return '$' + Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2}); }
+function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 2500); }
+
+async function j(url, opt){ const r = await fetch(url, opt); return r.json(); }
+
+async function classify(){
+  toast('Classifying…');
+  const res = await j('/api/classify', {method:'POST'});
+  toast(`Classified ${res.classified} of ${res.of}`);
+  refresh();
+}
+async function reimport(){
+  toast('Re-importing…');
+  const res = await j('/api/reimport', {method:'POST'});
+  toast(`Imported ${res.imported} transactions`);
+  refresh();
+}
+
+async function loadCards(){
+  const s = await j('/api/summary');
+  document.getElementById('range').textContent =
+    s.first_date ? `${s.first_date} → ${s.last_date} · ${s.n_accounts} accounts · ${s.n_sources} institutions` : '';
+  const c = document.getElementById('cards');
+  c.innerHTML = [
+    ['Total spend', fmt(s.total_spend), 'spend'],
+    ['Total income', fmt(s.total_income), 'income'],
+    ['Net', fmt(s.net), s.net>=0?'income':'spend'],
+    ['Transactions', s.n_transactions, ''],
+    ['Accounts', s.n_accounts, ''],
+  ].map(([l,v,cls]) => `<div class="card"><div class="label">${l}</div><div class="value ${cls}">${v}</div></div>`).join('');
+}
+
+let monthlyChart, catChart, trendChart;
+function ensureChart(id, cfg){
+  const el = document.getElementById(id);
+  const existing = Chart.getChart(el);
+  if (existing) { existing.data = cfg.data; existing.update(); return existing; }
+  return new Chart(el, cfg);
+}
+
+async function loadMonthly(){
+  monthlyData = await j('/api/monthly');
+  const labels = monthlyData.spend.map(d=>d.month);
+  ensureChart('monthlyChart', {
+    type:'bar',
+    data:{ labels, datasets:[
+      {label:'Spend', data: labels.map(m=>monthlyData.spend.find(d=>d.month===m)?.spend||0),
+       backgroundColor: labels.map(m=> m===state.month ? '#ff6b6b' : 'rgba(255,107,107,.55)'),
+       borderRadius:4},
+    ]},
+    options:{
+      plugins:{legend:{display:false},
+        tooltip:{callbacks:{label:c=>'$'+c.raw.toLocaleString(undefined,{minimumFractionDigits:2})}}},
+      scales:{ x:{ticks:{color:'#8a90a2'},grid:{color:'#262c3a'}},
+               y:{ticks:{color:'#8a90a2',callback:v=>'$'+v.toLocaleString()},grid:{color:'#262c3a'}} },
+      onClick: (evt, els) => { if (els.length) selectMonth(labels[els[0].index]); }
+    }
+  });
+  loadTrend();
+}
+
+function selectMonth(month){
+  state.month = (state.month === month) ? '' : month;
+  document.getElementById('monthSel').value = state.month;
+  document.getElementById('yearSel').value = state.month ? state.month.slice(0,4) : '';
+  refresh();
+}
+
+function loadTrend(){
+  // Build category x month stacked area
+  const months = [...new Set(monthlyData.by_category.map(d=>d.month))].sort();
+  const cats = [...new Set(monthlyData.by_category.map(d=>d.category))];
+  const datasets = cats.map(c=>({
+    label:c, data: months.map(m=>{
+      const row = monthlyData.by_category.find(d=>d.month===m && d.category===c);
+      return row ? row.spend : 0;
+    }),
+    backgroundColor: (CAT_COLORS[c]||'#57606f')+'cc',
+    stack:'s', tension:.2, fill:true
+  }));
+  ensureChart('trendChart', {
+    type:'line',
+    data:{ labels: months, datasets },
+    options:{ plugins:{legend:{display:false}},
+      scales:{ x:{stacked:true,ticks:{color:'#8a90a2'},grid:{color:'#262c3a'}},
+               y:{stacked:true,ticks:{color:'#8a90a2',callback:v=>'$'+v.toLocaleString()},grid:{color:'#262c3a'}} } }
+  });
+}
+
+async function loadCategories(){
+  const y = document.getElementById('yearSel').value;
+  const m = document.getElementById('monthSel').value;
+  const q = new URLSearchParams();
+  if (y) q.set('year', y);
+  if (m) q.set('month', m);
+  const data = await j('/api/categories?'+q.toString());
+  ensureChart('catChart', {
+    type:'doughnut',
+    data:{ labels: data.map(d=>d.category),
+      datasets:[{ data: data.map(d=>d.spend),
+        backgroundColor: data.map(d=>CAT_COLORS[d.category]||'#57606f'),
+        borderColor:'#171a21', borderWidth:2 }] },
+    options:{ plugins:{legend:{position:'right',labels:{color:'#8a90a2'}}} }
+  });
+}
+
+async function loadAccounts(){
+  const data = await j('/api/accounts');
+  document.getElementById('accounts').innerHTML =
+    '<table><thead><tr><th>Source</th><th>Account</th><th class="num">Txns</th><th class="num">Net</th></tr></thead><tbody>' +
+    data.map(a=>`<tr><td>${a.source}</td><td>${a.account}</td><td class="num">${a.n}</td>
+      <td class="num ${a.net>=0?'pos':'neg'}">${fmt(a.net)}</td></tr>`).join('') +
+    '</tbody></table>';
+}
+
+async function loadUnknown(){
+  const data = await j('/api/unknown?limit=100');
+  document.getElementById('unknownCount').textContent = data.length + ' shown';
+  const opts = standardCategories.map(c=>`<option value="${c}">${c}</option>`).join('');
+  document.getElementById('unknown').innerHTML = data.length ?
+    '<table><thead><tr><th>Date</th><th>Source</th><th>Description</th><th class="num">Amount</th><th>Assign</th></tr></thead><tbody>' +
+    data.map(u=>`<tr><td>${u.date}</td><td>${u.source}</td><td>${u.description}</td>
+      <td class="num neg">${fmt(u.amount)}</td>
+      <td><select class="cat-select" onchange="assignCat(${u.id}, this.value)">${opts}</select></td></tr>`).join('') +
+    '</tbody></table>' : '<p style="color:var(--muted)">All transactions categorized. 🎉</p>';
+}
+
+async function assignCat(id, category){
+  await j('/api/categorize', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ids:[id], category})});
+  loadUnknown();
+}
+
+async function loadTransactions(){
+  const q = new URLSearchParams();
+  if (state.month) q.set('month', state.month);
+  else if (state.year) q.set('year', state.year);
+  const data = await j('/api/transactions?'+q.toString());
+  const scope = state.month ? state.month : (state.year ? `all of ${state.year}` : 'all time');
+  document.getElementById('txnTitle').innerHTML =
+    `Transactions · ${scope} <span class="badge">${data.length} shown</span>`;
+  const opts = standardCategories.map(c=>`<option value="${c}">${c}</option>`).join('');
+  document.getElementById('txn').innerHTML = data.length ?
+    '<table><thead><tr><th>Date</th><th>Source</th><th>Description</th><th>Category</th><th class="num">Amount</th></tr></thead><tbody>' +
+    data.map(t=>`<tr><td>${t.date}</td><td>${t.source}</td><td>${t.description}</td>
+      <td><select class="cat-select" onchange="assignCat(${t.id}, this.value)">${opts}</select></td>
+      <td class="num ${t.amount<0?'neg':'pos'}">${fmt(t.amount)}</td></tr>`).join('') +
+    '</tbody></table>' : '<p style="color:var(--muted)">No transactions in this range.</p>';
+}
+
+function clearFilter(){
+  state.year=''; state.month='';
+  document.getElementById('yearSel').value='';
+  document.getElementById('monthSel').value='';
+  refresh();
+}
+
+async function refresh(){
+  await loadCards();
+  await loadMonthly();
+  await loadCategories();
+  await loadAccounts();
+  await loadTransactions();
+  await loadUnknown();
+}
+
+async function init(){
+  standardCategories = await j('/api/standard-categories');
+  // Populate year/month selectors from monthly data
+  const md = await j('/api/monthly');
+  const months = [...new Set(md.spend.map(d=>d.month))].sort();
+  const years = [...new Set(months.map(m=>m.slice(0,4)))].sort();
+  const ys = document.getElementById('yearSel');
+  ys.innerHTML = '<option value="">All years</option>' + years.map(y=>`<option>${y}</option>`).join('');
+  const ms = document.getElementById('monthSel');
+  ms.innerHTML = '<option value="">All months</option>' + months.map(m=>`<option value="${m}">${m}</option>`).join('');
+  await refresh();
+}
+
+init();
+</script>
+</body>
+</html>

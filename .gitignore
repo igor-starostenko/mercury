@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Data — never commit real transactions
+app/data/
+*.duckdb
+*.duckdb.wal
+
+# OS
+.DS_Store
