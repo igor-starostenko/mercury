@@ -1,1 +1,1 @@
-"""Family Finance application package."""
+"""Mercury application package."""

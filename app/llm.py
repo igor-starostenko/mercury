@@ -23,8 +23,8 @@ STANDARD_CATEGORIES = [
     "Insurance", "Investing", "Income", "Fees", "Transfers", "Other",
 ]
 
-DEFAULT_ENDPOINT = os.environ.get("FF_LLM_ENDPOINT", "http://localhost:11434/v1/chat/completions")
-DEFAULT_MODEL = os.environ.get("FF_LLM_MODEL", "llama3.2")
+DEFAULT_ENDPOINT = os.environ.get("MERCURY_LLM_ENDPOINT", "http://localhost:11434/v1/chat/completions")
+DEFAULT_MODEL = os.environ.get("MERCURY_LLM_MODEL", "llama3.2")
 
 
 def classify_batch_llm(descriptions: list[str]) -> list[Optional[str]]:
@@ -43,8 +43,8 @@ def classify_batch_llm(descriptions: list[str]) -> list[Optional[str]]:
 
 
 def _call_local_llm(descriptions: list[str]) -> list[Optional[str]]:
-    endpoint = os.environ.get("FF_LLM_ENDPOINT", DEFAULT_ENDPOINT)
-    model = os.environ.get("FF_LLM_MODEL", DEFAULT_MODEL)
+    endpoint = os.environ.get("MERCURY_LLM_ENDPOINT", DEFAULT_ENDPOINT)
+    model = os.environ.get("MERCURY_LLM_MODEL", DEFAULT_MODEL)
 
     numbered = "\n".join(f"{i}. {d}" for i, d in enumerate(descriptions))
     prompt = (

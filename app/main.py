@@ -1,4 +1,4 @@
-"""Family Finance web server.
+"""Mercury web server.
 
 Serves the static analytics dashboard and a small JSON API backed by DuckDB.
 Local-only: binds to 127.0.0.1.
@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from . import ingest, analytics, llm
 
-app = FastAPI(title="Family Finance")
+app = FastAPI(title="Mercury")
 
 DB_PATH = ingest.DB_PATH
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -182,9 +182,9 @@ def health():
 
 if __name__ == "__main__":
     import uvicorn
-    host = os.environ.get("FF_HOST", "127.0.0.1")
-    port = int(os.environ.get("FF_PORT", "8000"))
-    print(f"Family Finance starting on http://{host}:{port}")
+    host = os.environ.get("MERCURY_HOST", "127.0.0.1")
+    port = int(os.environ.get("MERCURY_PORT", "8000"))
+    print(f"Mercury starting on http://{host}:{port}")
     print(f"  input dir : {ingest.INPUT_DIR}")
     print(f"  database  : {ingest.DB_PATH}")
     uvicorn.run(app, host=host, port=port)

@@ -1,23 +1,21 @@
 """Family Finance - local personal finance planner.
 
 Standardizes CSV extracts from multiple institutions into a single DuckDB
-table, deduplicates overlapping date ranges, and serves a static-ish web UI
+table, deduplicates overlapping extracts, and serves a static-ish web UI
 for spend analytics.
 
 Run:
     .venv/bin/python -m app.main
 
-Input CSVs are read from a configurable folder (see INPUT_DIR below). By
-default that is the user's real extracts folder:
-    /Users/pneuma/Documents/Important/Finances
-You can override it with the FF_INPUT_DIR environment variable, e.g.:
-    FF_INPUT_DIR=/somewhere/else .venv/bin/python -m app.main
+Data enters exclusively through uploads: the UI sends bank CSVs (single
+files or a whole folder) to POST /api/upload, which merges them into the
+table by stable key. Nothing is scanned from disk in the background.
 """
 from __future__ import annotations
 
 import csv
-import os
 import re
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, date
 from pathlib import Path
@@ -29,28 +27,7 @@ import duckdb
 # Paths
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"            # sample extracts live here
 DB_PATH = BASE_DIR / "familyfinance.duckdb"
-
-# Where the user drops their bank CSV exports. The default points at the real
-# extracts folder; FF_INPUT_DIR overrides it. Falls back to the local sample
-# folder if the configured path doesn't exist yet.
-DEFAULT_INPUT_DIR = "/Users/pneuma/Documents/Important/Finances"
-SAMPLE_INPUT_DIR = DATA_DIR / "extracts"
-
-
-def _resolve_input_dir() -> Path:
-    configured = os.environ.get("FF_INPUT_DIR", "").strip()
-    if configured:
-        p = Path(configured).expanduser()
-        return p
-    if Path(DEFAULT_INPUT_DIR).is_dir():
-        return Path(DEFAULT_INPUT_DIR)
-    return SAMPLE_INPUT_DIR
-
-
-INPUT_DIR = _resolve_input_dir()
-INPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ---------------------------------------------------------------------------

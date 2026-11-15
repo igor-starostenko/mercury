@@ -1,4 +1,4 @@
-# FamilyFinance
+# Mercury
 
 Local family finance dashboard: FastAPI + DuckDB. Parse bank CSV exports,
 classify transactions, browse spend analytics. Runs entirely on your machine
@@ -17,7 +17,7 @@ uv run python -m app.main
 # → http://127.0.0.1:8000
 ```
 
-Bind/host configurable via `FF_HOST` / `FF_PORT`.
+Bind/host configurable via `MERCURY_HOST` / `MERCURY_PORT`.
 
 Dependencies are pinned in `pyproject.toml` and fully locked (including
 transitive deps) in `uv.lock` — commit both. Update with `uv add pkg` /
@@ -40,7 +40,7 @@ and populated automatically on first request.
 
 - Heuristic rules run at import time.
 - `POST /api/classify` — batch-classify remaining unknowns via a local
-  LLM (Ollama by default; `FF_LLM_ENDPOINT` / `FF_LLM_MODEL`). Falls back
+  LLM (Ollama by default; `MERCURY_LLM_ENDPOINT` / `MERCURY_LLM_MODEL`). Falls back
   to rule-based when the model is unavailable.
 - `POST /api/categorize` — assign a standard category manually:
   `{"ids": [1, 2], "category": "Groceries"}`.
