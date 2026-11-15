@@ -7,18 +7,20 @@ from typing import Any
 # Amount sign convention: negative = money out (spend), positive = money in.
 
 
-def monthly_spend(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
-    """Spend (expenses only) aggregated by month, across all accounts."""
-    rows = con.execute("""
+def monthly_spend(con: duckdb.DuckDBPyConnection,
+                  year: str | None = None) -> list[dict[str, Any]]:
+    """Spend (expenses only) aggregated by month. Optional year scope."""
+    where, params = _date_filter(year, None)
+    rows = con.execute(f"""
         SELECT
             strftime(txn_date, '%Y-%m') AS month,
             SUM(amount) AS spend,
             COUNT(*) AS n
         FROM transactions
-        WHERE amount < 0
+        WHERE amount < 0 {where}
         GROUP BY 1
         ORDER BY 1
-    """).fetchall()
+    """, params).fetchall()
     return [{"month": m, "spend": round(-s, 2), "n": n} for m, s, n in rows]
 
 
@@ -35,18 +37,20 @@ def spend_by_year(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
     return [{"year": y, "spend": round(-s, 2)} for y, s in rows]
 
 
-def spend_by_category_month(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
-    """Category x month matrix for stacked trend charts."""
-    rows = con.execute("""
+def spend_by_category_month(con: duckdb.DuckDBPyConnection,
+                            year: str | None = None) -> list[dict[str, Any]]:
+    """Category x month matrix for stacked trend charts. Optional year scope."""
+    where, params = _date_filter(year, None)
+    rows = con.execute(f"""
         SELECT
             strftime(txn_date, '%Y-%m') AS month,
             COALESCE(category, 'Uncategorized') AS category,
             SUM(amount) AS spend
         FROM transactions
-        WHERE amount < 0
+        WHERE amount < 0 {where}
         GROUP BY 1, 2
         ORDER BY 1, 3 DESC
-    """).fetchall()
+    """, params).fetchall()
     return [{"month": m, "category": c, "spend": round(-s, 2)}
             for m, c, s in rows]
 
@@ -68,17 +72,73 @@ def spend_by_category(con: duckdb.DuckDBPyConnection,
     return [{"category": c, "spend": round(-s, 2), "n": n} for c, s, n in rows]
 
 
-def income_by_month(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
-    rows = con.execute("""
+def income_by_month(con: duckdb.DuckDBPyConnection,
+                    year: str | None = None) -> list[dict[str, Any]]:
+    where, params = _date_filter(year, None)
+    rows = con.execute(f"""
         SELECT
             strftime(txn_date, '%Y-%m') AS month,
             SUM(amount) AS income
         FROM transactions
-        WHERE amount > 0
+        WHERE amount > 0 {where}
+        GROUP BY 1
+        ORDER BY 1
+    """, params).fetchall()
+    return [{"month": m, "income": round(s, 2)} for m, s in rows]
+
+
+def year_totals(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
+    """Per-year income/spend/net totals for the home page year cards."""
+    rows = con.execute("""
+        SELECT
+            strftime(txn_date, '%Y') AS year,
+            COALESCE(SUM(amount) FILTER (amount < 0), 0) AS spend,
+            COALESCE(SUM(amount) FILTER (amount > 0), 0) AS income,
+            COUNT(*) AS n
+        FROM transactions
         GROUP BY 1
         ORDER BY 1
     """).fetchall()
-    return [{"month": m, "income": round(s, 2)} for m, s in rows]
+    return [{"year": y, "spend": round(-s, 2), "income": round(i, 2),
+             "net": round(i + s, 2), "n": n} for y, s, i, n in rows]
+
+
+def weekly_breakdown(con: duckdb.DuckDBPyConnection,
+                     month: str) -> list[dict[str, Any]]:
+    """Spend/income per calendar week (Mon–Sun, ISO) overlapping the month.
+
+    ``month`` is 'YYYY-MM'. Returns one row per week that has transactions;
+    weeks with activity outside the month are excluded by the filter, and
+    the client zero-fills the calendar buckets.
+    """
+    rows = con.execute("""
+        SELECT
+            date_trunc('week', txn_date) AS week,
+            COALESCE(SUM(amount) FILTER (amount < 0), 0) AS spend,
+            COALESCE(SUM(amount) FILTER (amount > 0), 0) AS income,
+            COUNT(*) AS n
+        FROM transactions
+        WHERE strftime(txn_date, '%Y-%m') = ?
+        GROUP BY 1
+        ORDER BY 1
+    """, [month]).fetchall()
+    return [{"week": str(w)[:10], "spend": round(-s, 2),
+             "income": round(i, 2), "n": n} for w, s, i, n in rows]
+
+
+def available_periods(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+    """Distinct years and months present in the data (ascending)."""
+    rows = con.execute("""
+        SELECT strftime(txn_date, '%Y') AS year,
+               strftime(txn_date, '%Y-%m') AS month
+        FROM transactions
+        GROUP BY 1, 2
+        ORDER BY 2
+    """).fetchall()
+    return {
+        "years": sorted({y for y, _ in rows}),
+        "months": sorted({m for _, m in rows}),
+    }
 
 
 def summary(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
@@ -150,9 +210,25 @@ def set_category_by_key(con: duckdb.DuckDBPyConnection, key: str,
 def transactions(con: duckdb.DuckDBPyConnection,
                  year: str | None = None,
                  month: str | None = None,
+                 category: str | None = None,
                  limit: int = 1000) -> list[dict[str, Any]]:
-    """Individual transactions for a date range (newest first)."""
-    where, params = _date_filter(year, month)
+    """Individual transactions for a date range (newest first).
+
+    ``category`` matches the normalized name as displayed ('Uncategorized'
+    for rows with no category).
+    """
+    conds: list[str] = []
+    params: list = []
+    if month:
+        conds.append("strftime(txn_date, '%Y-%m') = ?")
+        params.append(month)
+    elif year:
+        conds.append("strftime(txn_date, '%Y') = ?")
+        params.append(year)
+    if category:
+        conds.append("COALESCE(category, 'Uncategorized') = ?")
+        params.append(category)
+    where = ("WHERE " + " AND ".join(conds)) if conds else ""
     rows = con.execute(f"""
         SELECT id, source, account, CAST(txn_date AS VARCHAR), amount,
                description, COALESCE(category, 'Uncategorized')

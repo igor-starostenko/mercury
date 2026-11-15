@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mercury — Year</title>
+<link rel="stylesheet" href="/static/css/app.css" />
+<script src="/static/vendor/chart.umd.min.js"></script>
+<script src="/static/js/common.js"></script>
+<script src="/static/js/ui.js"></script>
+</head>
+<body>
+<div id="site-header"></div>
+<main>
+  <section class="section">
+    <div class="toolbar">
+      <label for="yearSel">Year</label>
+      <select id="yearSel"></select>
+      <span class="spacer"></span>
+      <a href="/" style="color:var(--muted);font-size:13px">← back to overview</a>
+    </div>
+  </section>
+
+  <div class="panel" id="emptyHint" style="display:none;margin-bottom:24px">
+    <h2 style="margin:0 0 8px;font-size:16px">No transactions yet</h2>
+    <p style="color:var(--muted);margin:0">Import bank CSVs from the top bar, then come back here.</p>
+  </div>
+
+  <section class="section">
+    <div class="cards" id="yearCards"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Monthly cash flow</h2>
+      <span class="hint" id="chartHint"></span>
+    </div>
+    <div class="panel"><canvas id="flowChart"></canvas></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Spend by category</h2>
+      <span class="hint">this year · click a row to drill down</span>
+    </div>
+    <div class="panel tight" id="catTable"></div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+<div id="modal-root"></div>
+
+<script>
+let flowChart = null;
+
+window.onDataChanged = () => renderYear($id('yearSel').value);
+
+async function renderYear(year) {
+  const [md, cats, allYears] = await Promise.all([
+    api('/api/monthly?year=' + encodeURIComponent(year)),
+    api('/api/categories?year=' + encodeURIComponent(year)),
+    api('/api/year-totals'),
+  ]);
+
+  const y = allYears.find(d => d.year === year) ||
+    { year, income: 0, spend: 0, net: 0, n: 0 };
+  const rate = y.income > 0 ? (y.net / y.income * 100).toFixed(1) + '%' : '—';
+  $id('yearCards').innerHTML = [
+    ['Income', fmtMoney(y.income), 'income'],
+    ['Spent', fmtMoney(y.spend), 'spend'],
+    ['Net', fmtMoney(y.net), y.net >= 0 ? 'income' : 'spend'],
+    ['Savings rate', rate, ''],
+  ].map(([l, v, c]) =>
+    `<div class="card"><div class="label">${l} · ${year}</div><div class="value ${c}">${v}</div></div>`).join('');
+
+  // Twelve calendar months, zero-filled.
+  const monthKeys = Array.from({ length: 12 }, (_, i) =>
+    `${year}-${String(i + 1).padStart(2, '0')}`);
+  flowChart = makeFlowChart($id('flowChart'),
+    MONTHS_SHORT,
+    monthKeys.map(m => md.spend.find(d => d.month === m)?.spend || 0),
+    monthKeys.map(m => md.income.find(d => d.month === m)?.income || 0),
+    i => location.href = '/month?month=' + monthKeys[i]);
+  $id('chartHint').textContent = `${year} · click a bar for the month view`;
+
+  renderCategoryTable($id('catTable'), cats, { year });
+  setRangeSub(`calendar year ${year}`);
+}
+
+(async function init() {
+  CATS = await api('/api/standard-categories');
+  renderChrome('year');
+  const periods = await api('/api/periods');
+  if (!periods.years.length) {
+    $id('emptyHint').style.display = 'block';
+    return;
+  }
+  const sel = $id('yearSel');
+  // Newest first.
+  sel.innerHTML = periods.years.slice().reverse()
+    .map(y => `<option>${y}</option>`).join('');
+  const requested = getParam('year');
+  sel.value = requested && periods.years.includes(requested)
+    ? requested : periods.years[periods.years.length - 1];
+  sel.onchange = () => location.href = '/year?year=' + sel.value;
+  try {
+    await renderYear(sel.value);
+  } catch (e) {
+    toast('Failed to load: ' + e.message, 8000);
+  }
+})();
+</script>
+</body>
+</html>
