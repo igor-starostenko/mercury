@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Family Finance</title>
+<title>Mercury</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
   :root {
@@ -51,6 +51,16 @@
   .toast { position: fixed; bottom: 20px; right: 20px; background: var(--panel-2); border:1px solid var(--border);
            padding: 12px 18px; border-radius: 10px; opacity: 0; transition: opacity .3s; pointer-events:none; }
   .toast.show { opacity: 1; }
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none;
+    align-items: center; justify-content: center; z-index: 60; }
+  .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px 24px; min-width: 480px; max-width: 92vw; max-height: 80vh; overflow: auto;
+    box-shadow: 0 16px 48px rgba(0,0,0,.45); }
+  .modal h2 { margin: 0 0 12px; font-size: 16px; }
+  .modal table { font-size: 13px; }
+  .modal .err { color: var(--spend); }
+  .modal-foot { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+  .modal-foot span { flex: 1; color: var(--muted); font-size: 13px; }
   @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -96,6 +106,16 @@
   </div>
 </main>
 <div class="toast" id="toast"></div>
+<div class="modal-backdrop" id="uploadModal" onclick="if(event.target===this)closeUpload()">
+  <div class="modal">
+    <h2>Import summary</h2>
+    <div id="uploadTableWrap"></div>
+    <div class="modal-foot">
+      <span id="uploadTotals"></span>
+      <button class="primary" onclick="closeUpload()">OK</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const CAT_COLORS = {
@@ -137,15 +157,36 @@ async function uploadFiles(list){
   toast(`Importing ${files.length} file${files.length>1?'s':''}…`, 120000);
   try {
     const res = await j('/api/upload', {method:'POST', body: fd});
-    const skipped = res.files.filter(f=>f.error).map(f=>f.name);
-    let msg = `Imported ${res.imported} new transaction${res.imported===1?'':'s'} · ${res.total} total`;
-    if (skipped.length) msg += ` · skipped: ${skipped.join(', ')}`;
-    toast(msg, 8000);
+    showUpload(res);
   } catch (e) {
     toast('Import failed: ' + e.message, 8000);
   }
   refresh();
 }
+
+function esc(s){ return String(s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function showUpload(res){
+  let added=0, dups=0, skipped=[];
+  const rows = res.files.map(f => {
+    const d = f.error ? 0 : f.rows - f.new;
+    if (f.error) skipped.push(f.name); else { added += f.new; dups += d; }
+    const name = f.name.length > 36 ? '…' + f.name.slice(-35) : f.name;
+    return `<tr><td title="${esc(f.name)}">${esc(name)}</td><td>${f.source?esc(f.source):'—'}</td>
+      <td class="num">${f.error?'—':f.rows}</td><td class="num">${f.error?'—':f.new}</td>
+      <td class="num">${f.error?'—':d}</td>
+      <td>${f.error?`<span class="err">${esc(f.error)}</span>`:''}</td></tr>`;
+  }).join('');
+  document.getElementById('uploadTableWrap').innerHTML =
+    '<table><thead><tr><th>File</th><th>Source</th><th class="num">Rows</th><th class="num">Added</th>' +
+    '<th class="num">Duplicates</th><th>Error</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  document.getElementById('uploadTotals').textContent =
+    `${added} added · ${dups} duplicate${dups===1?'':'s'} · ${res.total} total` +
+    (skipped.length ? ` · skipped: ${skipped.join(', ')}` : '');
+  document.getElementById('uploadModal').style.display = 'flex';
+}
+function closeUpload(){ document.getElementById('uploadModal').style.display = 'none'; }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeUpload(); });
 
 async function loadCards(){
   const s = await j('/api/summary');
