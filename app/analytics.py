@@ -200,12 +200,14 @@ def unknown_categories(con: duckdb.DuckDBPyConnection,
 
 
 def set_category(con: duckdb.DuckDBPyConnection, txn_id: int,
-                 category: str | None) -> None:
+                 category: str | None, source: str = "manual") -> None:
     """Layer a user-chosen category on top of the original import.
 
     The imported row keeps its CSV-provided category untouched; the
     override table takes precedence in every read. ``category=None``
     removes the override, reverting the row to its original category.
+    ``source`` records who set it: 'manual' (user edit), 'llm'
+    (auto-classify) or 'rule' (custom category rule).
     """
     if category is None or str(category).strip() == "":
         con.execute("DELETE FROM category_overrides WHERE txn_id = ?",
@@ -216,9 +218,10 @@ def set_category(con: duckdb.DuckDBPyConnection, txn_id: int,
             [txn_id])
     else:
         con.execute(
-            "INSERT INTO category_overrides VALUES (?, ?) "
-            "ON CONFLICT (txn_id) DO UPDATE SET category = excluded.category",
-            [txn_id, str(category).strip()])
+            "INSERT INTO category_overrides VALUES (?, ?, ?) "
+            "ON CONFLICT (txn_id) DO UPDATE SET category = excluded.category, "
+            "source = excluded.source",
+            [txn_id, str(category).strip(), source])
         con.execute("UPDATE transactions SET classified = true WHERE id = ?",
                     [txn_id])
 
@@ -229,6 +232,36 @@ def set_category_by_key(con: duckdb.DuckDBPyConnection, key: str,
     for (txn_id,) in con.execute(
             "SELECT id FROM transactions WHERE key = ?", [key]).fetchall():
         set_category(con, txn_id, category)
+
+
+def override_rows(con: duckdb.DuckDBPyConnection,
+                  limit: int = 200) -> list[dict[str, Any]]:
+    """Transactions carrying an explicit override (newest first).
+
+    Each row carries ``category`` (effective, the override),
+    ``original_category`` (the CSV import, untouched) and ``set_by``:
+    'manual', 'llm', 'rule' — or 'unknown' for overrides that predate
+    source tracking. Soft-deleted rows are excluded.
+    """
+    rows = con.execute("""
+        SELECT t.id, t.source, t.account, CAST(t.txn_date AS VARCHAR),
+               t.amount, t.description,
+               COALESCE(o.category, t.category),
+               t.category, o.source
+        FROM transactions AS t
+        JOIN category_overrides AS o ON o.txn_id = t.id
+        WHERE t.id NOT IN (SELECT txn_id FROM deleted_transactions)
+        ORDER BY t.txn_date DESC, t.id DESC
+        LIMIT ?
+    """, [limit]).fetchall()
+    return [
+        {"id": r[0], "source": r[1], "account": r[2], "date": r[3],
+         "amount": r[4], "description": r[5],
+         "category": _display_category(r[6]),
+         "original_category": r[7],
+         "set_by": r[8] or "unknown"}
+        for r in rows
+    ]
 
 
 def soft_delete(con: duckdb.DuckDBPyConnection, txn_id: int) -> bool:

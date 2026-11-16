@@ -77,6 +77,15 @@ LLM, or custom rules) are stored as overrides that take precedence over
 the CSV-provided category, and clearing a category (or sending
 `"category": null`) puts the imported one back.
 
+Every override records who set it — `manual` (an edit from the UI),
+`llm` (auto-classify) or `rule` (custom category rule). The Categories
+page has a **Categorized transactions** section next to the
+uncategorized list: it shows every override with a "Set by" badge,
+filterable by All / You / LLM / Rule, and the category is editable
+inline (re-picking one marks the row as yours).
+`GET /api/overrides` returns the same list as JSON (`set_by` is
+`"unknown"` for overrides made before source tracking existed).
+
 - `DELETE /api/transactions/{id}` — remove a transaction (the × in the
   transaction tables). It is a soft delete: the row disappears from every
   view and total, but the imported data stays in the database, and

@@ -159,9 +159,9 @@ def apply_rules(con: duckdb.DuckDBPyConnection,
         con.execute("BEGIN TRANSACTION")
         try:
             con.executemany(
-                "INSERT INTO category_overrides VALUES (?, ?) "
-                "ON CONFLICT (txn_id) DO UPDATE SET "
-                "category = excluded.category", updates)
+                "INSERT INTO category_overrides VALUES (?, ?, 'rule') "
+                "ON CONFLICT (txn_id) DO UPDATE SET category = excluded.category, "
+                "source = excluded.source", updates)
             con.executemany(
                 "UPDATE transactions SET classified = true WHERE id = ?",
                 [(tid,) for tid, _ in updates])
