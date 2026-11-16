@@ -68,7 +68,7 @@ window.onDataChanged = () => renderMonth(curMonth);
 function monthWeeks(month) {
   const [y, m] = month.split('-').map(Number);
   const first = Date.UTC(y, m - 1, 1);
-  const last = Date.UTC(y, m - 1, 0); // 0th of next month = last day of m
+  const last = Date.UTC(y, m, 0); // 0th of next month = last day of m
   let start = first;
   start -= ((new Date(first).getUTCDay() + 6) % 7) * 86400000; // back to Monday
   const out = [];
