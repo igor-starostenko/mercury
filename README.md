@@ -87,10 +87,15 @@ Every override records who set it — `manual` (an edit from the UI),
 `llm` (auto-classify) or `rule` (custom category rule). The Categories
 page has a **Categorized transactions** section next to the
 uncategorized list: it shows every override with a "Set by" badge,
-filterable by All / You / LLM / Rule, and the category is editable
+filterable by All / You / LLM / Rule / Unknown, and the category is
+editable
 inline (re-picking one marks the row as yours).
-`GET /api/overrides` returns the same list as JSON (`set_by` is
-`"unknown"` for overrides made before source tracking existed).
+`GET /api/overrides` returns the same list as JSON. Overrides that
+predate source tracking are best-effort attributed on first startup:
+any whose category is exactly what the auto-classify rule fallback
+assigns to the description becomes `llm` (that is the only path that
+produces such a match without human input); the rest — most likely
+manual edits — stay `"unknown"`.
 
 - `DELETE /api/transactions/{id}` — remove a transaction (the × in the
   transaction tables). It is a soft delete: the row disappears from every

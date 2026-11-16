@@ -632,3 +632,34 @@ def migrate_originals(con: duckdb.DuckDBPyConnection) -> int:
                 raise
             moved += 1
     return moved
+
+
+def backfill_override_source(con: duckdb.DuckDBPyConnection) -> int:
+    """One-time attribution of legacy overrides (source IS NULL).
+
+    Overrides that predate source tracking carry no record of who set
+    them. If the override's category is exactly what the deterministic
+    rule fallback assigns to the description, it came from the
+    auto-classify path (live LLM or its offline fallback) and is
+    attributed 'llm'. Anything else — most likely a manual edit — is
+    left 'unknown'. Idempotent: rows already attributed no longer
+    match, and re-checking the rest only writes on a match.
+    """
+    from . import llm as llm_mod  # local import: no cycle at module load
+    con.execute(CREATE_OVERRIDES_SQL)
+    ensure_override_source(con)
+    rows = con.execute("""
+        SELECT o.txn_id, t.description, o.category
+        FROM category_overrides AS o
+        JOIN transactions AS t ON t.id = o.txn_id
+        WHERE o.source IS NULL
+    """).fetchall()
+    updated = [
+        (tid,) for tid, desc, cat in rows
+        if cat and llm_mod.rule_classify(desc) == cat
+    ]
+    if updated:
+        con.executemany(
+            "UPDATE category_overrides SET source = 'llm' WHERE txn_id = ?",
+            updated)
+    return len(updated)
