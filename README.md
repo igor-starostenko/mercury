@@ -23,6 +23,26 @@ Dependencies are pinned in `pyproject.toml` and fully locked (including
 transitive deps) in `uv.lock` — commit both. Update with `uv add pkg` /
 `uv lock --upgrade`, then `uv sync`.
 
+### Database
+
+Data lives in `app/mercury.duckdb` — a single file next to the code.
+It is gitignored and not in the repo: on first start the app creates
+empty tables, so a fresh clone starts with no data. If you start the
+server and see stale data, it comes from a leftover
+`app/mercury.duckdb` in your working copy (gitignored, so git won't
+show it) — move it aside and the next start is fresh.
+
+Use a different database file — e.g. your own data — without touching
+the default:
+
+```bash
+MERCURY_DB=~/my-data/mercury.duckdb uv run python -m app.main
+```
+
+`MERCURY_DB` takes an absolute path (`~` is fine); the resolved file is
+printed on the startup line `database: ...`. Unset, the default
+`app/mercury.duckdb` is used.
+
 ### Data
 
 Import bank CSVs from the UI (top bar): **Import CSV files** picks
@@ -35,8 +55,10 @@ background; the database only contains what you uploaded.
 - `POST /api/upload` — multipart form, field `files` (one or more CSVs).
   Rows are merged into the table by stable key: duplicates are skipped,
   manual/LLM categories are preserved, re-uploading is a no-op.
-- `uv run python generate_samples.py` — regenerates synthetic sample CSVs in
-  `app/data/extracts/` (no real data is stored in this repo).
+- `uv run python generate_samples.py` — generates synthetic sample CSVs in
+  `app/data/extracts/` (no real data is stored in this repo). These are
+  the "dummy data" behind the demo dashboard: generate them, then import
+  via the UI (they are not imported automatically).
 
 ### Classification
 
