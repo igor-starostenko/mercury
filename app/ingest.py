@@ -14,6 +14,7 @@ table by stable key. Nothing is scanned from disk in the background.
 from __future__ import annotations
 
 import csv
+import os
 import re
 import tempfile
 from dataclasses import dataclass, field
@@ -27,7 +28,10 @@ import duckdb
 # Paths
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "mercury.duckdb"
+# MERCURY_DB (absolute path, ~ ok) points the app at a different database
+# file — e.g. your own data — without touching the default dev database.
+_env_db = os.environ.get("MERCURY_DB")
+DB_PATH = Path(_env_db).expanduser() if _env_db else BASE_DIR / "mercury.duckdb"
 
 
 # ---------------------------------------------------------------------------
