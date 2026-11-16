@@ -26,7 +26,6 @@ function renderChrome(active) {
       <div class="header-actions">
         <button onclick="pickFiles()">Import CSV files</button>
         <button onclick="pickFolder()">Import folder</button>
-        <button class="primary" onclick="runClassify()">Classify unknown (LLM)</button>
         <input type="file" id="filePick" accept=".csv,.txt" multiple hidden onchange="uploadFiles(this.files)">
         <input type="file" id="folderPick" webkitdirectory hidden onchange="uploadFiles(this.files)">
       </div>

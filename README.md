@@ -65,8 +65,14 @@ background; the database only contains what you uploaded.
 
 - Heuristic rules run at import time.
 - `POST /api/classify` — batch-classify remaining unknowns via a local
-  LLM (Ollama by default; `MERCURY_LLM_ENDPOINT` / `MERCURY_LLM_MODEL`). Falls back
-  to rule-based when the model is unavailable.
+  LLM: any OpenAI-compatible endpoint works (Ollama, oMLX, LM Studio,
+  llama.cpp server, ...). Configure with `MERCURY_LLM_ENDPOINT` (default
+  `http://localhost:11434/v1/chat/completions` — Ollama),
+  `MERCURY_LLM_MODEL` (default `llama3.2`), and `MERCURY_LLM_API_KEY`
+  (sent as `Authorization: Bearer …` when set). If the model is
+  unreachable the built-in keyword rules classify instead. The
+  **Classify unknown (LLM)** button is on the Categories page, next to
+  the uncategorized list.
 - `POST /api/categorize` — assign a standard category manually:
   `{"ids": [1, 2], "category": "Groceries"}`.
 

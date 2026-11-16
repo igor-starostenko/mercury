@@ -1,8 +1,12 @@
 """Local LLM classification of unknown transaction categories.
 
 Primary path: call a locally-served OpenAI-compatible chat endpoint
-(works with Ollama, LM Studio, llama.cpp server, vLLM, ...). The endpoint
-and model are read from environment variables so nothing is hard-wired.
+(works with Ollama, oMLX, LM Studio, llama.cpp server, vLLM, ...). The
+endpoint, model, and optional API key are read from environment
+variables so nothing is hard-wired:
+  MERCURY_LLM_ENDPOINT  (default: Ollama on localhost:11434)
+  MERCURY_LLM_MODEL     (default: llama3.2)
+  MERCURY_LLM_API_KEY   (sent as "Authorization: Bearer ..." when set)
 
 Fallback: if no local model is reachable, fall back to a lightweight
 rule-based classifier so the feature still works offline.
@@ -64,9 +68,12 @@ def _call_local_llm(descriptions: list[str]) -> list[Optional[str]]:
         "temperature": 0,
     }).encode("utf-8")
 
+    headers = {"Content-Type": "application/json"}
+    api_key = os.environ.get("MERCURY_LLM_API_KEY")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     req = urllib.request.Request(
-        endpoint, data=body,
-        headers={"Content-Type": "application/json"}, method="POST")
+        endpoint, data=body, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
             data = json.loads(resp.read().decode("utf-8"))
