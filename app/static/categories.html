@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mercury — Categories</title>
+<link rel="stylesheet" href="/static/css/app.css" />
+<script src="/static/vendor/chart.umd.min.js"></script>
+<script src="/static/js/common.js"></script>
+<script src="/static/js/ui.js"></script>
+</head>
+<body>
+<div id="site-header"></div>
+<main>
+  <div class="panel" id="emptyHint" style="display:none;margin-bottom:24px">
+    <h2 style="margin:0 0 8px;font-size:16px">No transactions yet</h2>
+    <p style="color:var(--muted);margin:0">Use <b>Import CSV files</b> or <b>Import folder</b> in the top bar to load
+    your bank exports (Wells Fargo, Chase, Apple Card, US Bank). Files are matched by filename — keep the bank's original names.</p>
+  </div>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Spend by category</h2>
+      <span class="hint">all time · click a row to drill down</span>
+    </div>
+    <div class="panel tight" id="catTable"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Custom category rules</h2>
+      <span class="hint">keyword in description → category · first rule wins · applied to new imports automatically</span>
+    </div>
+    <div class="panel" id="rulesPanel"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Uncategorized transactions</h2>
+      <span class="badge" id="unknownCount"></span>
+    </div>
+    <div class="panel tight" id="unknown"></div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+<div id="modal-root"></div>
+
+<script>
+window.onDataChanged = renderAll;
+
+async function renderAll() {
+  const [summary, cats, unknown, ruleData] = await Promise.all([
+    api('/api/summary'),
+    api('/api/categories'),
+    api('/api/unknown?limit=100'),
+    api('/api/rules'),
+  ]);
+
+  $id('emptyHint').style.display = summary.n_transactions ? 'none' : 'block';
+  setRangeSub(summary.first_date
+    ? `${summary.first_date} → ${summary.last_date} · ${summary.n_transactions} transactions · ${summary.n_accounts} accounts`
+    : '');
+
+  // Category totals with drill-down.
+  renderCategoryTable($id('catTable'), cats, {});
+
+  // Custom category rules (keyword -> category bulk override).
+  renderRules(ruleData);
+
+  // Uncategorized list (global, newest first).
+  $id('unknownCount').textContent = unknown.length + ' shown';
+  const unknownTxns = unknown.map(u => ({ ...u, category: 'Uncategorized' }));
+  $id('unknown').innerHTML = unknownTxns.length
+    ? txnTableHTML(unknownTxns)
+    : '<p class="empty">All transactions categorized. 🎉</p>';
+  wireCategorySelects($id('unknown'));
+}
+
+(async function init() {
+  CATS = await api('/api/standard-categories');
+  renderChrome('categories');
+  try {
+    await renderAll();
+  } catch (e) {
+    toast('Failed to load: ' + e.message, 8000);
+  }
+})();
+</script>
+</body>
+</html>

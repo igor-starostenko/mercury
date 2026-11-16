@@ -344,6 +344,11 @@ def year_page():
     return FileResponse(STATIC_DIR / "year.html")
 
 
+@app.get("/categories")
+def categories_page():
+    return FileResponse(STATIC_DIR / "categories.html")
+
+
 @app.get("/month")
 def month_page():
     return FileResponse(STATIC_DIR / "month.html")

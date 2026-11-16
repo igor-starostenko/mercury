@@ -35,6 +35,11 @@
   </section>
 
   <section class="section">
+    <div class="section-head"><h2>Accounts</h2></div>
+    <div class="panel tight" id="accounts"></div>
+  </section>
+
+  <section class="section">
     <div class="section-head">
       <h2>Spend by category</h2>
       <span class="hint">all time · click a row to drill down</span>
@@ -44,23 +49,10 @@
 
   <section class="section">
     <div class="section-head">
-      <h2>Uncategorized transactions</h2>
-      <span class="badge" id="unknownCount"></span>
-    </div>
-    <div class="panel tight" id="unknown"></div>
-  </section>
-
-  <section class="section">
-    <div class="section-head">
       <h2>Custom category rules</h2>
       <span class="hint">keyword in description → category · first rule wins · applied to new imports automatically</span>
     </div>
     <div class="panel" id="rulesPanel"></div>
-  </section>
-
-  <section class="section">
-    <div class="section-head"><h2>Accounts</h2></div>
-    <div class="panel tight" id="accounts"></div>
   </section>
 </main>
 <div class="toast" id="toast"></div>
@@ -70,12 +62,11 @@
 window.onDataChanged = renderAll;
 
 async function renderAll() {
-  const [summary, monthly, years, cats, unknown, accounts, ruleData] = await Promise.all([
+  const [summary, monthly, years, cats, accounts, ruleData] = await Promise.all([
     api('/api/summary'),
     api('/api/monthly'),
     api('/api/year-totals'),
     api('/api/categories'),
-    api('/api/unknown?limit=100'),
     api('/api/accounts'),
     api('/api/rules'),
   ]);
@@ -107,14 +98,6 @@ async function renderAll() {
 
   // Category totals with drill-down.
   renderCategoryTable($id('catTable'), cats, {});
-
-  // Uncategorized list (global, newest first).
-  $id('unknownCount').textContent = unknown.length + ' shown';
-  const unknownTxns = unknown.map(u => ({ ...u, category: 'Uncategorized' }));
-  $id('unknown').innerHTML = unknownTxns.length
-    ? txnTableHTML(unknownTxns)
-    : '<p class="empty">All transactions categorized. 🎉</p>';
-  wireCategorySelects($id('unknown'));
 
   // Custom category rules (keyword -> category bulk override).
   renderRules(ruleData);

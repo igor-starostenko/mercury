@@ -2,7 +2,7 @@
  *
  * Pages embed the shared chrome via:
  *   <div id="site-header"></div> ... <div id="modal-root"></div>
- * and call renderChrome('home'|'year'|'month') before their first paint.
+ * and call renderChrome('home'|'categories'|'year'|'month') before their first paint.
  * After any data mutation (upload / classify / categorize) components call
  * window.onDataChanged, which each page sets to its own re-render.
  */
@@ -19,6 +19,7 @@ function renderChrome(active) {
       </div>
       <nav>
         <a href="/" class="${active === 'home' ? 'active' : ''}">Overview</a>
+        <a href="/categories" class="${active === 'categories' ? 'active' : ''}">Categories</a>
         <a href="/year" class="${active === 'year' ? 'active' : ''}">Year</a>
         <a href="/month" class="${active === 'month' ? 'active' : ''}">Month</a>
       </nav>
