@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ingest, analytics, llm
+from . import ingest, analytics, llm, rules
 
 DB_PATH = ingest.DB_PATH
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -39,6 +39,7 @@ async def lifespan(_: FastAPI):
     con = get_con()
     try:
         con.execute(ingest.CREATE_TABLE_SQL)
+        con.execute(rules.CREATE_RULES_SQL)
     finally:
         con.close()
     yield
@@ -67,6 +68,8 @@ async def upload(files: list[UploadFile] = File(...)):
     con = get_con()
     report: list[dict] = []
     try:
+        # Custom rules override CSV categories on new rows (first match wins).
+        rules_list = rules.load_rules(con)
         for f in files:
             name = f.filename or "unnamed.csv"
             data = await f.read()
@@ -74,7 +77,7 @@ async def upload(files: list[UploadFile] = File(...)):
             entry = {"name": name, "source": source,
                      "rows": len(txns), "new": 0, "error": error}
             if error is None:
-                _, new = ingest.merge_txns(con, txns)
+                _, new = ingest.merge_txns(con, txns, rules=rules_list)
                 entry["new"] = new
             report.append(entry)
         total = con.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
@@ -187,18 +190,33 @@ def categorize(body: CategorizeBody):
 
 @app.post("/api/classify")
 def classify():
-    """Classify all currently-unknown transactions with the local LLM."""
+    """Classify all currently-unknown transactions.
+
+    Custom rules run first (no LLM cost); the remaining unknowns go to the
+    local LLM (or its built-in rule fallback).
+    """
     con = get_con()
     try:
         unknown = analytics.unknown_categories(con, limit=100000)
         if not unknown:
-            return {"classified": 0, "method": "none"}
-        results = llm.classify_batch_llm([u["description"] for u in unknown])
+            return {"classified": 0, "of": 0}
+        rules_list = rules.load_rules(con)
+        rest: list[dict] = []
         updated = 0
-        for u, cat in zip(unknown, results):
+        for u in unknown:
+            cat = rules.match_category(u["description"], rules_list)
             if cat:
                 analytics.set_category(con, u["id"], cat)
                 updated += 1
+            else:
+                rest.append(u)
+        if rest:
+            results = llm.classify_batch_llm(
+                [u["description"] for u in rest])
+            for u, cat in zip(rest, results):
+                if cat:
+                    analytics.set_category(con, u["id"], cat)
+                    updated += 1
         con.commit()
         return {"classified": updated, "of": len(unknown)}
     finally:
@@ -220,6 +238,74 @@ def transactions(year: str | None = None, month: str | None = None,
 @app.get("/api/standard-categories")
 def standard_categories():
     return llm.STANDARD_CATEGORIES
+
+
+# ---------------------------------------------------------------------------
+# Custom category rules (keyword in description -> category, bulk override)
+# ---------------------------------------------------------------------------
+class RuleBody(BaseModel):
+    pattern: str
+    category: str
+
+
+@app.get("/api/rules")
+def list_rules():
+    """Rules in evaluation order, with live match counts and an exact
+    preview of how many transactions 'Apply' would change."""
+    con = get_con()
+    try:
+        rule_list = rules.load_rules(con, enabled_only=False)
+        enabled = [r for r in rule_list if r.enabled]
+        matches, would_change = rules.rule_stats(con, enabled)
+        return {
+            "rules": [{"id": r.id, "pattern": r.pattern,
+                       "category": r.category, "enabled": r.enabled,
+                       "matches": matches.get(r.id, 0)}
+                      for r in rule_list],
+            "would_change": would_change,
+        }
+    finally:
+        con.close()
+
+
+@app.post("/api/rules")
+def create_rule(body: RuleBody):
+    con = get_con()
+    try:
+        try:
+            r = rules.create_rule(con, body.pattern, body.category)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"id": r.id, "pattern": r.pattern,
+                "category": r.category, "enabled": True}
+    finally:
+        con.close()
+
+
+@app.delete("/api/rules/{rule_id}")
+def delete_rule(rule_id: int):
+    con = get_con()
+    try:
+        if not rules.delete_rule(con, rule_id):
+            raise HTTPException(status_code=404, detail="rule not found")
+        return {"deleted": rule_id}
+    finally:
+        con.close()
+
+
+@app.post("/api/rules/apply")
+def apply_rules():
+    """Bulk-apply all enabled rules: every matching transaction gets the
+    winning rule's category, overwriting its current category. Returns the
+    number of rows actually changed."""
+    con = get_con()
+    try:
+        rule_list = rules.load_rules(con)
+        updated = rules.apply_rules(con, rule_list)
+        con.commit()
+        return {"updated": updated, "rules": len(rule_list)}
+    finally:
+        con.close()
 
 
 # ---------------------------------------------------------------------------

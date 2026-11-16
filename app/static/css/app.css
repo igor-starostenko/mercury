@@ -127,6 +127,21 @@ tr.detail-row > td { background: #12151c; padding: 0; }
 .modal-foot { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 .modal-foot span { flex: 1; color: var(--muted); font-size: 13px; }
 
+/* ------------------------------------------------------------ custom rules */
+.rule-form { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.rule-form input[type=text] {
+  flex: 1; min-width: 180px;
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 7px 12px; font-size: 13px; font-family: inherit;
+}
+.rule-form input[type=text]:focus { outline: none; border-color: var(--accent); }
+.rule-del { background: none; border: none; border-radius: 6px; color: var(--muted);
+  font-size: 17px; line-height: 1; padding: 2px 8px; }
+.rule-del:hover { color: var(--spend); border-color: var(--spend); background: rgba(255, 107, 107, .08); }
+.rule-apply { display: flex; align-items: center; gap: 14px; margin-top: 16px; flex-wrap: wrap; }
+.rule-apply .hint { color: var(--muted); font-size: 12px; opacity: .75; }
+
 @media (max-width: 860px) {
   header { padding: 10px 14px; }
   main { padding: 16px 14px 40px; }

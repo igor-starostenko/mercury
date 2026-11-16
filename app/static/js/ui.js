@@ -107,6 +107,11 @@ async function runClassify() {
 /* -------------------------------------------------------------- flow chart */
 /* Grouped bar chart: spend (red) vs income (green) per label. */
 function makeFlowChart(canvas, labels, spend, income, onBar) {
+  // Re-renders (onDataChanged) reuse the same canvas: destroy the old
+  // chart first, or Chart.js throws "Canvas is already in use" and the
+  // whole re-render aborts before the later panels update.
+  const existing = Chart.getChart(canvas);
+  if (existing) existing.destroy();
   const chart = new Chart(canvas, {
     type: 'bar',
     data: { labels, datasets: [
@@ -248,4 +253,78 @@ function wireCategorySelects(root) {
       }
     });
   });
+}
+
+/* ------------------------------------------------------------- custom rules */
+/* Keyword-in-description -> category bulk override. Data: {rules, would_change}. */
+function renderRules(data) {
+  const el = $id('rulesPanel');
+  if (!el) return;
+  const list = data.rules.length
+    ? '<table><thead><tr>' +
+      '<th>Keyword</th><th>→ Category</th><th class="num">Matches</th><th style="width:40px"></th>' +
+      '</tr></thead><tbody>' +
+      data.rules.map(r => `
+        <tr>
+          <td class="desc" title="${esc(r.pattern)}">${esc(r.pattern)}</td>
+          <td><span class="dot" style="background:${CAT_COLORS[r.category] || '#57606f'}"></span>${esc(r.category)}</td>
+          <td class="num">${r.matches}</td>
+          <td class="num"><button class="rule-del" title="Delete rule" onclick="deleteRule(${r.id})">×</button></td>
+        </tr>`).join('') +
+      '</tbody></table>'
+    : '<p class="empty" style="padding:14px">No rules yet — add one above.</p>';
+  el.innerHTML = `
+    <form class="rule-form" onsubmit="addRule(event)">
+      <input id="rulePattern" type="text" maxlength="200" required
+             placeholder="Keyword, e.g. 'walmart'">
+      <select id="ruleCategory" required>
+        ${CATS.map(c => `<option>${esc(c)}</option>`).join('')}
+      </select>
+      <button type="submit">Add rule</button>
+    </form>
+    ${list}
+    <div class="rule-apply">
+      <button class="primary" ${data.rules.length ? '' : 'disabled'}
+              onclick="applyRules()">Apply rules to all transactions${data.would_change ? ` — ${data.would_change} will change` : ''}</button>
+      <span class="hint">Apply overwrites the current category of every matching row (CSV, LLM or manual).</span>
+    </div>`;
+}
+
+async function addRule(e) {
+  e.preventDefault();
+  const pattern = $id('rulePattern').value.trim();
+  const category = $id('ruleCategory').value;
+  try {
+    await api('/api/rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pattern, category }),
+    });
+    $id('rulePattern').value = '';
+    toast('Rule added');
+    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  } catch (err) {
+    toast('Could not add rule: ' + err.message, 5000);
+  }
+}
+
+async function deleteRule(id) {
+  try {
+    await api('/api/rules/' + id, { method: 'DELETE' });
+    toast('Rule deleted');
+    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  } catch (err) {
+    toast('Delete failed: ' + err.message, 5000);
+  }
+}
+
+async function applyRules() {
+  toast('Applying rules…');
+  try {
+    const res = await api('/api/rules/apply', { method: 'POST' });
+    toast(`Rules applied — ${res.updated} transaction${res.updated === 1 ? '' : 's'} updated`);
+  } catch (err) {
+    toast('Apply failed: ' + err.message, 6000);
+  }
+  if (window.onDataChanged) setTimeout(onDataChanged, 400);
 }
