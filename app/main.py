@@ -43,6 +43,7 @@ async def lifespan(_: FastAPI):
     try:
         con.execute(ingest.CREATE_TABLE_SQL)
         con.execute(ingest.CREATE_OVERRIDES_SQL)
+        ingest.ensure_override_source(con)
         con.execute(ingest.CREATE_DELETED_SQL)
         con.execute(rules.CREATE_RULES_SQL)
         con.execute(ingest.CREATE_EFFECTIVE_VIEW_SQL)
@@ -205,6 +206,22 @@ def unknown(limit: int = 200):
         con.close()
 
 
+@app.get("/api/overrides")
+def overrides(limit: int = 200):
+    """Transactions with an explicit category override (newest first).
+
+    Each row carries ``set_by`` — 'manual' (a user edit), 'llm'
+    (auto-classify) or 'rule' (custom category rule) — plus 'unknown'
+    for overrides set before source tracking existed, and the
+    CSV-provided ``original_category`` alongside the effective one.
+    """
+    con = get_con()
+    try:
+        return analytics.override_rows(con, limit)
+    finally:
+        con.close()
+
+
 class CategorizeBody(BaseModel):
     ids: list[int]
     category: str | None = None
@@ -247,7 +264,7 @@ def classify():
         for u in unknown:
             cat = rules.match_category(u["description"], rules_list)
             if cat:
-                analytics.set_category(con, u["id"], cat)
+                analytics.set_category(con, u["id"], cat, source="rule")
                 updated += 1
             else:
                 rest.append(u)
@@ -256,7 +273,7 @@ def classify():
                 [u["description"] for u in rest])
             for u, cat in zip(rest, results):
                 if cat:
-                    analytics.set_category(con, u["id"], cat)
+                    analytics.set_category(con, u["id"], cat, source="llm")
                     updated += 1
         con.commit()
         return {"classified": updated, "of": len(unknown)}

@@ -434,9 +434,24 @@ CREATE_TABLE_SQL = """
 CREATE_OVERRIDES_SQL = """
     CREATE TABLE IF NOT EXISTS category_overrides (
         txn_id   INTEGER PRIMARY KEY,
-        category VARCHAR
+        category VARCHAR,
+        source   VARCHAR
     )
 """
+
+
+def ensure_override_source(con: duckdb.DuckDBPyConnection) -> None:
+    """One-time migration: add the source column to category_overrides.
+
+    source records who set the override: 'manual' (user edit), 'llm'
+    (auto-classify), 'rule' (custom category rule), NULL for overrides
+    that predate source tracking (assigner unknown).
+    """
+    cols = {r[1] for r in con.execute(
+        "PRAGMA table_info('category_overrides')").fetchall()}
+    if "source" not in cols:
+        con.execute(
+            "ALTER TABLE category_overrides ADD COLUMN source VARCHAR")
 
 CREATE_DELETED_SQL = """
     CREATE TABLE IF NOT EXISTS deleted_transactions (
@@ -448,6 +463,7 @@ CREATE_EFFECTIVE_VIEW_SQL = """
     CREATE OR REPLACE VIEW effective_transactions AS
     SELECT t.id, t.source, t.account, t.txn_date, t.amount, t.description,
            COALESCE(o.category, t.category) AS category,
+           o.source AS override_source,
            t.raw_category, t.currency, t.key, t.classified
     FROM transactions AS t
     LEFT JOIN category_overrides AS o ON o.txn_id = t.id
@@ -530,6 +546,7 @@ def merge_txns(con: duckdb.DuckDBPyConnection,
     from . import rules as rule_mod  # local import: no cycle at module load
     con.execute(CREATE_TABLE_SQL)
     con.execute(CREATE_OVERRIDES_SQL)
+    ensure_override_source(con)
     existing = {k for (k,) in con.execute(
         "SELECT key FROM transactions").fetchall()}
     seen: set[str] = set()
@@ -566,9 +583,10 @@ def merge_txns(con: duckdb.DuckDBPyConnection,
                 overrides = [(tid, cat) for tid, cat in overrides if cat]
                 if overrides:
                     con.executemany(
-                        "INSERT INTO category_overrides VALUES (?, ?) "
+                        "INSERT INTO category_overrides VALUES (?, ?, 'rule') "
                         "ON CONFLICT (txn_id) DO UPDATE SET "
-                        "category = excluded.category", overrides)
+                        "category = excluded.category, source = excluded.source",
+                        overrides)
             con.execute("COMMIT")
         except Exception:
             con.execute("ROLLBACK")
@@ -590,6 +608,7 @@ def migrate_originals(con: duckdb.DuckDBPyConnection) -> int:
     into transactions afterwards. Returns rows changed.
     """
     con.execute(CREATE_OVERRIDES_SQL)
+    ensure_override_source(con)
     moved = 0
     for tid, cat, raw in con.execute(
             "SELECT id, category, raw_category FROM transactions").fetchall():
@@ -598,8 +617,10 @@ def migrate_originals(con: duckdb.DuckDBPyConnection) -> int:
             con.execute("BEGIN TRANSACTION")
             try:
                 if cat is not None and str(cat).strip() != "":
+                    # NULL source: this override predates source tracking,
+                    # so who set it (manual, LLM, rule) is unknown.
                     con.execute(
-                        "INSERT INTO category_overrides VALUES (?, ?) "
+                        "INSERT INTO category_overrides VALUES (?, ?, NULL) "
                         "ON CONFLICT (txn_id) DO UPDATE SET "
                         "category = excluded.category", [tid, cat])
                 con.execute(
