@@ -54,7 +54,8 @@ background; the database only contains what you uploaded.
 
 - `POST /api/upload` — multipart form, field `files` (one or more CSVs).
   Rows are merged into the table by stable key: duplicates are skipped,
-  manual/LLM categories are preserved, re-uploading is a no-op.
+  original imports and existing edits are preserved, re-uploading is a
+  no-op.
 - `uv run python generate_samples.py` — generates synthetic sample CSVs in
   `app/data/extracts/` (no real data is stored in this repo). These are
   the "dummy data" behind the demo dashboard: generate them, then import
@@ -68,3 +69,16 @@ background; the database only contains what you uploaded.
   to rule-based when the model is unavailable.
 - `POST /api/categorize` — assign a standard category manually:
   `{"ids": [1, 2], "category": "Groceries"}`.
+
+### Editing imported data
+
+The imported rows are never rewritten: your category changes (manual,
+LLM, or custom rules) are stored as overrides that take precedence over
+the CSV-provided category, and clearing a category (or sending
+`"category": null`) puts the imported one back.
+
+- `DELETE /api/transactions/{id}` — remove a transaction (the × in the
+  transaction tables). It is a soft delete: the row disappears from every
+  view and total, but the imported data stays in the database, and
+  re-importing the file does not bring it back.
+- `POST /api/transactions/{id}/restore` — undo a soft delete.

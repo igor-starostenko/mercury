@@ -1,4 +1,11 @@
-"""Analytics queries over the standardized transactions table."""
+"""Analytics queries over the transactions data.
+
+All reads go through the ``effective_transactions`` view (ingest.py): it
+joins ``category_overrides`` (user-set category, takes precedence over
+the imported one) and filters out ``deleted_transactions`` (soft
+deletes). The imported rows in ``transactions`` are never rewritten by
+user actions.
+"""
 from __future__ import annotations
 
 import duckdb
@@ -16,7 +23,7 @@ def monthly_spend(con: duckdb.DuckDBPyConnection,
             strftime(txn_date, '%Y-%m') AS month,
             SUM(amount) AS spend,
             COUNT(*) AS n
-        FROM transactions
+        FROM effective_transactions
         WHERE amount < 0 {where}
         GROUP BY 1
         ORDER BY 1
@@ -29,7 +36,7 @@ def spend_by_year(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
         SELECT
             strftime(txn_date, '%Y') AS year,
             SUM(amount) AS spend
-        FROM transactions
+        FROM effective_transactions
         WHERE amount < 0
         GROUP BY 1
         ORDER BY 1
@@ -46,7 +53,7 @@ def spend_by_category_month(con: duckdb.DuckDBPyConnection,
             strftime(txn_date, '%Y-%m') AS month,
             COALESCE(category, 'Uncategorized') AS category,
             SUM(amount) AS spend
-        FROM transactions
+        FROM effective_transactions
         WHERE amount < 0 {where}
         GROUP BY 1, 2
         ORDER BY 1, 3 DESC
@@ -64,7 +71,7 @@ def spend_by_category(con: duckdb.DuckDBPyConnection,
             COALESCE(category, 'Uncategorized') AS category,
             SUM(amount) AS spend,
             COUNT(*) AS n
-        FROM transactions
+        FROM effective_transactions
         WHERE amount < 0 {where}
         GROUP BY 1
         ORDER BY 2 DESC
@@ -79,7 +86,7 @@ def income_by_month(con: duckdb.DuckDBPyConnection,
         SELECT
             strftime(txn_date, '%Y-%m') AS month,
             SUM(amount) AS income
-        FROM transactions
+        FROM effective_transactions
         WHERE amount > 0 {where}
         GROUP BY 1
         ORDER BY 1
@@ -95,7 +102,7 @@ def year_totals(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
             COALESCE(SUM(amount) FILTER (amount < 0), 0) AS spend,
             COALESCE(SUM(amount) FILTER (amount > 0), 0) AS income,
             COUNT(*) AS n
-        FROM transactions
+        FROM effective_transactions
         GROUP BY 1
         ORDER BY 1
     """).fetchall()
@@ -117,7 +124,7 @@ def weekly_breakdown(con: duckdb.DuckDBPyConnection,
             COALESCE(SUM(amount) FILTER (amount < 0), 0) AS spend,
             COALESCE(SUM(amount) FILTER (amount > 0), 0) AS income,
             COUNT(*) AS n
-        FROM transactions
+        FROM effective_transactions
         WHERE strftime(txn_date, '%Y-%m') = ?
         GROUP BY 1
         ORDER BY 1
@@ -131,7 +138,7 @@ def available_periods(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     rows = con.execute("""
         SELECT strftime(txn_date, '%Y') AS year,
                strftime(txn_date, '%Y-%m') AS month
-        FROM transactions
+        FROM effective_transactions
         GROUP BY 1, 2
         ORDER BY 2
     """).fetchall()
@@ -150,7 +157,7 @@ def summary(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
                MIN(txn_date), MAX(txn_date),
                COUNT(DISTINCT source),
                COUNT(DISTINCT account)
-        FROM transactions
+        FROM effective_transactions
     """).fetchone()
     return {
         "n_transactions": total[0],
@@ -167,7 +174,7 @@ def summary(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
 def accounts(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
     rows = con.execute("""
         SELECT source, account, COUNT(*), COALESCE(SUM(amount),0)
-        FROM transactions
+        FROM effective_transactions
         GROUP BY 1, 2
         ORDER BY 1, 2
     """).fetchall()
@@ -180,7 +187,7 @@ def unknown_categories(con: duckdb.DuckDBPyConnection,
     rows = con.execute("""
         SELECT id, source, account, CAST(txn_date AS VARCHAR), amount,
                description, raw_category
-        FROM transactions
+        FROM effective_transactions
         WHERE category IS NULL OR category = '' OR category = 'Uncategorized'
         ORDER BY txn_date DESC
         LIMIT ?
@@ -194,17 +201,62 @@ def unknown_categories(con: duckdb.DuckDBPyConnection,
 
 def set_category(con: duckdb.DuckDBPyConnection, txn_id: int,
                  category: str | None) -> None:
-    con.execute(
-        "UPDATE transactions SET category = ?, classified = true WHERE id = ?",
-        [category, txn_id])
+    """Layer a user-chosen category on top of the original import.
+
+    The imported row keeps its CSV-provided category untouched; the
+    override table takes precedence in every read. ``category=None``
+    removes the override, reverting the row to its original category.
+    """
+    if category is None or str(category).strip() == "":
+        con.execute("DELETE FROM category_overrides WHERE txn_id = ?",
+                    [txn_id])
+        con.execute(
+            "UPDATE transactions SET classified = "
+            "(category IS NOT NULL AND category != '') WHERE id = ?",
+            [txn_id])
+    else:
+        con.execute(
+            "INSERT INTO category_overrides VALUES (?, ?) "
+            "ON CONFLICT (txn_id) DO UPDATE SET category = excluded.category",
+            [txn_id, str(category).strip()])
+        con.execute("UPDATE transactions SET classified = true WHERE id = ?",
+                    [txn_id])
 
 
 def set_category_by_key(con: duckdb.DuckDBPyConnection, key: str,
                         category: str) -> None:
     """Apply a category to every row sharing a key (same underlying txn)."""
+    for (txn_id,) in con.execute(
+            "SELECT id FROM transactions WHERE key = ?", [key]).fetchall():
+        set_category(con, txn_id, category)
+
+
+def soft_delete(con: duckdb.DuckDBPyConnection, txn_id: int) -> bool:
+    """Soft-delete: hide the transaction from every read.
+
+    The imported row itself is not touched (originals stay unmodified);
+    a tombstone in deleted_transactions filters it out. Idempotent.
+    Returns False if the transaction does not exist.
+    """
+    if not con.execute(
+            "SELECT 1 FROM transactions WHERE id = ?", [txn_id]).fetchone():
+        return False
     con.execute(
-        "UPDATE transactions SET category = ?, classified = true WHERE key = ?",
-        [category, key])
+        "INSERT INTO deleted_transactions VALUES (?) "
+        "ON CONFLICT (txn_id) DO NOTHING", [txn_id])
+    return True
+
+
+def restore(con: duckdb.DuckDBPyConnection, txn_id: int) -> bool:
+    """Remove a soft-delete tombstone. True if the row was deleted."""
+    cur = con.execute(
+        "DELETE FROM deleted_transactions WHERE txn_id = ?", [txn_id])
+    return (cur.rowcount or 0) > 0
+
+
+def _display_category(category: Any) -> str:
+    """Normalized name as displayed in the UI."""
+    return category if category else "Uncategorized"
 
 
 def transactions(con: duckdb.DuckDBPyConnection,
@@ -215,7 +267,9 @@ def transactions(con: duckdb.DuckDBPyConnection,
     """Individual transactions for a date range (newest first).
 
     ``category`` matches the normalized name as displayed ('Uncategorized'
-    for rows with no category).
+    for rows with no category). ``original_category`` is the
+    CSV-provided category (what the import stored, before any user
+    override). Soft-deleted rows are excluded.
     """
     conds: list[str] = []
     params: list = []
@@ -226,20 +280,27 @@ def transactions(con: duckdb.DuckDBPyConnection,
         conds.append("strftime(txn_date, '%Y') = ?")
         params.append(year)
     if category:
-        conds.append("COALESCE(category, 'Uncategorized') = ?")
+        conds.append("COALESCE(o.category, t.category, 'Uncategorized') = ?")
         params.append(category)
-    where = ("WHERE " + " AND ".join(conds)) if conds else ""
+    # Explicit join (not the view) because the original, pre-override
+    # category is exposed alongside the effective one.
     rows = con.execute(f"""
-        SELECT id, source, account, CAST(txn_date AS VARCHAR), amount,
-               description, COALESCE(category, 'Uncategorized')
-        FROM transactions
-        {where}
-        ORDER BY txn_date DESC, id DESC
+        SELECT t.id, t.source, t.account, CAST(t.txn_date AS VARCHAR),
+               t.amount, t.description,
+               COALESCE(o.category, t.category),
+               t.category
+        FROM transactions AS t
+        LEFT JOIN category_overrides AS o ON o.txn_id = t.id
+        WHERE t.id NOT IN (SELECT txn_id FROM deleted_transactions)
+        {("AND " + " AND ".join(conds)) if conds else ""}
+        ORDER BY t.txn_date DESC, t.id DESC
         LIMIT ?
     """, [*params, limit]).fetchall()
     return [
         {"id": r[0], "source": r[1], "account": r[2], "date": r[3],
-         "amount": r[4], "description": r[5], "category": r[6]}
+         "amount": r[4], "description": r[5],
+         "category": _display_category(r[6]),
+         "original_category": r[7]}
         for r in rows
     ]
 

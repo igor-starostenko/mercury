@@ -143,6 +143,9 @@ tr.detail-row > td { background: #12151c; padding: 0; }
 .rule-del { background: none; border: none; border-radius: 6px; color: var(--muted);
   font-size: 17px; line-height: 1; padding: 2px 8px; }
 .rule-del:hover { color: var(--spend); border-color: var(--spend); background: rgba(255, 107, 107, .08); }
+.txn-del { background: none; border: none; border-radius: 6px; color: var(--muted);
+  font-size: 15px; line-height: 1; padding: 2px 7px; }
+.txn-del:hover { color: var(--spend); background: rgba(255, 107, 107, .08); }
 .rule-apply { display: flex; align-items: center; gap: 14px; margin-top: 16px; flex-wrap: wrap; }
 .rule-apply .hint { color: var(--muted); font-size: 12px; opacity: .75; }
 
