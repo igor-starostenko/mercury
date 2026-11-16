@@ -8,13 +8,14 @@ nothing is scanned from disk in the background.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import duckdb
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -52,19 +53,38 @@ app = FastAPI(title="Mercury", lifespan=lifespan)
 # API
 # ---------------------------------------------------------------------------
 @app.post("/api/upload")
-async def upload(files: list[UploadFile] = File(...)):
+async def upload(files: list[UploadFile] = File(...),
+                 source: str | None = Form(None),
+                 source_map: str | None = Form(None)):
     """Import uploaded bank CSVs (individual files or a whole folder).
 
-    Each file is parsed by its filename and merged into the transactions
-    table by stable key: rows already present are skipped, so existing rows
-    and their manual/LLM categories are never touched. Idempotent —
-    re-uploading the same file adds nothing.
+    Bank resolution per file: filename token -> CSV header signature ->
+    user's pick. ``source`` applies a bank to every file that had none in
+    its name; ``source_map`` is a JSON object {filename: bank} for picking
+    per file. Files whose bank still can't be resolved come back with
+    needs_source=true and the list of known banks so the UI can ask.
+
+    Each file is merged into the transactions table by stable key: rows
+    already present are skipped, so existing rows and their manual/LLM
+    categories are never touched. Idempotent — re-uploading the same file
+    adds nothing.
     """
     if not files:
         raise HTTPException(status_code=400, detail="no files provided")
     if len(files) > MAX_UPLOAD_FILES:
         raise HTTPException(
             status_code=400, detail=f"too many files (max {MAX_UPLOAD_FILES})")
+    smap: dict[str, str] = {}
+    if source_map:
+        try:
+            parsed = json.loads(source_map)
+            if not isinstance(parsed, dict):
+                raise ValueError
+            smap = {str(k): str(v) for k, v in parsed.items()}
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=400,
+                detail="source_map must be a JSON object {filename: bank}")
     con = get_con()
     report: list[dict] = []
     try:
@@ -73,11 +93,14 @@ async def upload(files: list[UploadFile] = File(...)):
         for f in files:
             name = f.filename or "unnamed.csv"
             data = await f.read()
-            txns, source, error = ingest.parse_file_bytes(name, data)
-            entry = {"name": name, "source": source,
-                     "rows": len(txns), "new": 0, "error": error}
-            if error is None:
-                _, new = ingest.merge_txns(con, txns, rules=rules_list)
+            res = ingest.parse_file_bytes(name, data,
+                                          source=smap.get(name) or source)
+            entry = {"name": name, "source": res.source,
+                     "rows": len(res.txns), "new": 0, "error": res.error,
+                     "needs_source": res.needs_source, "note": res.note,
+                     "banks": ingest.KNOWN_BANKS if res.needs_source else None}
+            if res.error is None:
+                _, new = ingest.merge_txns(con, res.txns, rules=rules_list)
                 entry["new"] = new
             report.append(entry)
         total = con.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]

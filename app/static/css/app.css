@@ -126,6 +126,10 @@ tr.detail-row > td { background: #12151c; padding: 0; }
 .modal .err { color: var(--spend); }
 .modal-foot { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 .modal-foot span { flex: 1; color: var(--muted); font-size: 13px; }
+.bank-ask { margin-bottom: 14px; padding: 12px 14px; border: 1px dashed var(--border); border-radius: 8px; }
+.bank-ask p { margin: 0 0 10px; color: var(--muted); font-size: 13px; }
+.bank-ask .bank-pick { min-width: 150px; }
+.bank-ask-foot { margin-top: 10px; }
 
 /* ------------------------------------------------------------ custom rules */
 .rule-form { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }

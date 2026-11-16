@@ -49,12 +49,15 @@ function setRangeSub(text) {
 }
 
 /* -------------------------------------------------------------------- upload */
+let PENDING_FILES = new Map(); // filename -> File, kept so files that need a
+                               // bank pick can be re-sent after the user chooses
 function pickFiles() { const i = $id('filePick'); i.value = ''; i.click(); }
 function pickFolder() { const i = $id('folderPick'); i.value = ''; i.click(); }
 
 async function uploadFiles(list) {
   const files = [...(list || [])].filter(f => /\.(csv|txt)$/i.test(f.name));
   if (!files.length) { toast('No CSV files in that selection', 4000); return; }
+  PENDING_FILES = new Map(files.map(f => [f.name, f]));
   const fd = new FormData();
   files.forEach(f => fd.append('files', f));
   toast(`Importing ${files.length} file${files.length > 1 ? 's' : ''}…`, 120000);
@@ -73,18 +76,74 @@ function showUpload(res) {
     const d = f.error ? 0 : f.rows - f.new;
     if (f.error) skipped.push(f.name); else { added += f.new; dups += d; }
     const name = f.name.length > 36 ? '…' + f.name.slice(-35) : f.name;
-    return `<tr><td title="${esc(f.name)}">${esc(name)}</td><td>${f.source ? esc(f.source) : '—'}</td>
+    const src = f.source
+      ? esc(f.source) + (f.note && f.note !== 'filename'
+          ? ` <span class="hint">(${esc(f.note)})</span>` : '')
+      : '—';
+    return `<tr><td title="${esc(f.name)}">${esc(name)}</td><td>${src}</td>
       <td class="num">${f.error ? '—' : f.rows}</td><td class="num">${f.error ? '—' : f.new}</td>
       <td class="num">${f.error ? '—' : d}</td>
       <td>${f.error ? `<span class="err">${esc(f.error)}</span>` : ''}</td></tr>`;
   }).join('');
-  $id('uploadTableWrap').innerHTML =
+  const table =
     '<table><thead><tr><th>File</th><th>Source</th><th class="num">Rows</th><th class="num">Added</th>' +
     '<th class="num">Duplicates</th><th>Error</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  const needSrc = res.files.filter(f => f.needs_source);
+  let picker = '';
+  if (needSrc.length) {
+    const pickRows = needSrc.map(f => {
+      const name = f.name.length > 34 ? '…' + f.name.slice(-33) : f.name;
+      const banks = (f.banks && f.banks.length) ? f.banks :
+        ['Wells Fargo', 'US Bank', 'Apple Card', 'Chase'];
+      return `<tr><td title="${esc(f.name)}">${esc(name)}</td>
+        <td><select class="bank-pick" data-name="${esc(f.name)}">
+          <option value="">Choose bank…</option>
+          ${banks.map(b => `<option>${esc(b)}</option>`).join('')}
+        </select></td></tr>`;
+    }).join('');
+    picker = `<div class="bank-ask">
+      <p>These files have no recognizable bank name — pick which bank they
+      belong to:</p>
+      <table><tbody>${pickRows}</tbody></table>
+      <div class="bank-ask-foot">
+        <button class="primary" onclick="importWithBanks()">Import with bank</button>
+      </div></div>`;
+  }
+  $id('uploadTableWrap').innerHTML = picker + table;
   $id('uploadTotals').textContent =
     `${added} added · ${dups} duplicate${dups === 1 ? '' : 's'} · ${res.total} total` +
     (skipped.length ? ` · skipped: ${skipped.join(', ')}` : '');
   $id('uploadModal').style.display = 'flex';
+}
+
+/* Re-send the files waiting on a bank pick, with the chosen banks. */
+async function importWithBanks() {
+  const sels = [...document.querySelectorAll('.bank-pick')];
+  const missing = sels.filter(s => !s.value).map(s => s.dataset.name);
+  if (missing.length) {
+    toast('Pick a bank for: ' + missing.join(', '), 6000);
+    return;
+  }
+  const map = {};
+  const fd = new FormData();
+  for (const s of sels) {
+    const f = PENDING_FILES.get(s.dataset.name);
+    if (!f) continue;
+    map[s.dataset.name] = s.value;
+    fd.append('files', f);
+  }
+  if (!fd.getAll('files').length) {
+    toast('Original files no longer in memory — pick them again', 6000);
+    return;
+  }
+  fd.append('source_map', JSON.stringify(map));
+  toast('Importing…', 30000);
+  try {
+    showUpload(await api('/api/upload', { method: 'POST', body: fd }));
+  } catch (e) {
+    toast('Import failed: ' + e.message, 8000);
+  }
+  if (window.onDataChanged) setTimeout(onDataChanged, 400);
 }
 function closeUpload() {
   const m = $id('uploadModal');
