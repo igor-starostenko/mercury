@@ -418,6 +418,42 @@ CREATE_TABLE_SQL = """
     )
 """
 
+# ---------------------------------------------------------------------------
+# Originals stay untouched: user overrides and deletions live in separate
+# tables that layer on top of the imported rows.
+#
+#   transactions.category        -> exactly what the CSV import produced
+#   category_overrides           -> user-set category (manual, LLM, rule),
+#                                   takes precedence over the original
+#   deleted_transactions         -> soft-deleted rows (hidden from all reads)
+#
+# Every read goes through the effective_transactions view, which joins the
+# two override tables: effective category = override if present, else the
+# original; deleted rows are filtered out.
+# ---------------------------------------------------------------------------
+CREATE_OVERRIDES_SQL = """
+    CREATE TABLE IF NOT EXISTS category_overrides (
+        txn_id   INTEGER PRIMARY KEY,
+        category VARCHAR
+    )
+"""
+
+CREATE_DELETED_SQL = """
+    CREATE TABLE IF NOT EXISTS deleted_transactions (
+        txn_id INTEGER PRIMARY KEY
+    )
+"""
+
+CREATE_EFFECTIVE_VIEW_SQL = """
+    CREATE OR REPLACE VIEW effective_transactions AS
+    SELECT t.id, t.source, t.account, t.txn_date, t.amount, t.description,
+           COALESCE(o.category, t.category) AS category,
+           t.raw_category, t.currency, t.key, t.classified
+    FROM transactions AS t
+    LEFT JOIN category_overrides AS o ON o.txn_id = t.id
+    WHERE t.id NOT IN (SELECT txn_id FROM deleted_transactions)
+"""
+
 
 def parse_file_bytes(name: str, data: bytes,
                      source: Optional[str] = None) -> ParseResult:
@@ -484,14 +520,16 @@ def merge_txns(con: duckdb.DuckDBPyConnection,
     existing rows — including manual/LLM categories — are never touched.
     Uploads are idempotent: re-sending the same file adds nothing.
 
-    ``rules`` (a rules.Rule list, id order) overrides the parsed category
-    on NEW rows only: if a rule matches the description, that category
-    wins even over a CSV-provided one.
+    ``rules`` (a rules.Rule list, id order) layers a category on top of
+    NEW rows when the rule matches the description — written to the
+    override table, which takes precedence over the CSV-provided
+    category stored in the row itself.
 
     Returns (total_rows, new_rows).
     """
     from . import rules as rule_mod  # local import: no cycle at module load
     con.execute(CREATE_TABLE_SQL)
+    con.execute(CREATE_OVERRIDES_SQL)
     existing = {k for (k,) in con.execute(
         "SELECT key FROM transactions").fetchall()}
     seen: set[str] = set()
@@ -499,10 +537,6 @@ def merge_txns(con: duckdb.DuckDBPyConnection,
     for t in txns:
         if t.key not in existing and t.key not in seen:
             seen.add(t.key)
-            if rules:
-                cat = rule_mod.match_category(t.description, rules)
-                if cat:
-                    t.category = cat
             new.append(t)
     if new:
         # Continue the id sequence; ids from earlier rebuilds/merges are
@@ -513,14 +547,67 @@ def merge_txns(con: duckdb.DuckDBPyConnection,
         # were already in the table.
         con.execute("BEGIN TRANSACTION")
         try:
+            # The row stores the CSV-provided category as-is (originals
+            # stay unmodified, so re-imports and overrides never fight).
             con.executemany(
                 "INSERT INTO transactions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 [[max_id + i, t.source, t.account, t.date, t.amount,
                   t.description, t.category, t.raw_category, t.currency,
                   t.key, bool(t.category)]
                  for i, t in enumerate(new, start=1)])
+            if rules:
+                # Rule matches are user overrides: they go into the
+                # override table, which takes precedence over the row's
+                # original category — same as manual/LLM assignments.
+                overrides = [
+                    (max_id + i, rule_mod.match_category(t.description, rules))
+                    for i, t in enumerate(new, start=1)
+                ]
+                overrides = [(tid, cat) for tid, cat in overrides if cat]
+                if overrides:
+                    con.executemany(
+                        "INSERT INTO category_overrides VALUES (?, ?) "
+                        "ON CONFLICT (txn_id) DO UPDATE SET "
+                        "category = excluded.category", overrides)
             con.execute("COMMIT")
         except Exception:
             con.execute("ROLLBACK")
             raise
     return con.execute("SELECT COUNT(*) FROM transactions").fetchone()[0], len(new)
+
+
+def migrate_originals(con: duckdb.DuckDBPyConnection) -> int:
+    """Move pre-override categories out of the imported rows.
+
+    Databases created before the override tables existed have rule/LLM/
+    manual categories baked into transactions.category. For every row
+    whose category no longer matches what the CSV itself provided, the
+    current category moves to category_overrides (so it keeps taking
+    precedence) and the original import value is restored in the row.
+
+    Idempotent: once every row's category equals its CSV-derived value,
+    the migration is a no-op — and nothing writes non-CSV categories
+    into transactions afterwards. Returns rows changed.
+    """
+    con.execute(CREATE_OVERRIDES_SQL)
+    moved = 0
+    for tid, cat, raw in con.execute(
+            "SELECT id, category, raw_category FROM transactions").fetchall():
+        original = _map_category(raw) if raw else None
+        if cat != original:
+            con.execute("BEGIN TRANSACTION")
+            try:
+                if cat is not None and str(cat).strip() != "":
+                    con.execute(
+                        "INSERT INTO category_overrides VALUES (?, ?) "
+                        "ON CONFLICT (txn_id) DO UPDATE SET "
+                        "category = excluded.category", [tid, cat])
+                con.execute(
+                    "UPDATE transactions SET category = ? WHERE id = ?",
+                    [original, tid])
+                con.execute("COMMIT")
+            except Exception:
+                con.execute("ROLLBACK")
+                raise
+            moved += 1
+    return moved

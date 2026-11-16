@@ -35,12 +35,23 @@ def get_con() -> duckdb.DuckDBPyConnection:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # The table must exist before any endpoint runs: uploads are the only
-    # way data gets in, so an empty database is a valid state, not an error.
+    # The tables must exist before any endpoint runs: uploads are the
+    # only way data gets in, so an empty database is a valid state, not
+    # an error. The effective_transactions view layers the override and
+    # soft-delete tables on top of the imported rows.
     con = get_con()
     try:
         con.execute(ingest.CREATE_TABLE_SQL)
+        con.execute(ingest.CREATE_OVERRIDES_SQL)
+        con.execute(ingest.CREATE_DELETED_SQL)
         con.execute(rules.CREATE_RULES_SQL)
+        con.execute(ingest.CREATE_EFFECTIVE_VIEW_SQL)
+        # One-time migration: move pre-override categories (rule/LLM/
+        # manual) out of the imported rows into category_overrides.
+        moved = ingest.migrate_originals(con)
+        if moved:
+            print(f"  migrated    : moved {moved} pre-override categories "
+                  f"to category_overrides")
     finally:
         con.close()
     yield
@@ -103,7 +114,8 @@ async def upload(files: list[UploadFile] = File(...),
                 _, new = ingest.merge_txns(con, res.txns, rules=rules_list)
                 entry["new"] = new
             report.append(entry)
-        total = con.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
+        total = con.execute(
+            "SELECT COUNT(*) FROM effective_transactions").fetchone()[0]
         return {"files": report,
                 "imported": sum(e["new"] for e in report),
                 "total": total}
@@ -195,12 +207,18 @@ def unknown(limit: int = 200):
 
 class CategorizeBody(BaseModel):
     ids: list[int]
-    category: str
+    category: str | None = None
 
 
 @app.post("/api/categorize")
 def categorize(body: CategorizeBody):
-    """Manually assign a standard category to specific transactions."""
+    """Set the category for one or more transactions.
+
+    The imported (CSV) category in the row itself is never rewritten —
+    the value is written to category_overrides, which takes precedence
+    in every view and aggregate. null or an empty string removes the
+    user's override, so the row reverts to its CSV-provided original.
+    """
     con = get_con()
     try:
         for txn_id in body.ids:
@@ -250,10 +268,42 @@ def classify():
 def transactions(year: str | None = None, month: str | None = None,
                  category: str | None = None, limit: int = 1000):
     """Individual transactions for a date range (newest first),
-    optionally one normalized category."""
+    optionally one normalized category. Soft-deleted rows are excluded;
+    each row carries ``category`` (effective, override-aware) and
+    ``original_category`` (the CSV import's value, untouched)."""
     con = get_con()
     try:
         return analytics.transactions(con, year, month, category, limit)
+    finally:
+        con.close()
+
+
+@app.delete("/api/transactions/{txn_id}")
+def delete_transaction(txn_id: int):
+    """Soft-delete a transaction: it disappears from every view and
+    aggregate, but the imported row itself stays in the database
+    untouched. Re-importing the source file will not resurrect it.
+    Restore with POST /api/transactions/{id}/restore."""
+    con = get_con()
+    try:
+        if not analytics.soft_delete(con, txn_id):
+            raise HTTPException(status_code=404, detail="transaction not found")
+        con.commit()
+        return {"deleted": txn_id}
+    finally:
+        con.close()
+
+
+@app.post("/api/transactions/{txn_id}/restore")
+def restore_transaction(txn_id: int):
+    """Undo a soft-delete."""
+    con = get_con()
+    try:
+        if not analytics.restore(con, txn_id):
+            raise HTTPException(
+                status_code=404, detail="transaction is not deleted")
+        con.commit()
+        return {"restored": txn_id}
     finally:
         con.close()
 
@@ -319,8 +369,10 @@ def delete_rule(rule_id: int):
 @app.post("/api/rules/apply")
 def apply_rules():
     """Bulk-apply all enabled rules: every matching transaction gets the
-    winning rule's category, overwriting its current category. Returns the
-    number of rows actually changed."""
+    winning rule's category as a category_overrides entry (which takes
+    precedence over the imported category; the original is untouched).
+    Returns the number of rows whose effective category actually
+    changed."""
     con = get_con()
     try:
         rule_list = rules.load_rules(con)

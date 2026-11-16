@@ -277,6 +277,7 @@ function txnTableHTML(txns, opts = {}) {
         <th>Date</th><th>Source</th><th>Description</th>
         ${editable ? '<th>Category</th>' : ''}
         <th class="num">Amount</th>
+        ${editable ? '<th style="width:34px"></th>' : ''}
       </tr></thead>
       <tbody>${txns.map(t => `
         <tr>
@@ -285,9 +286,25 @@ function txnTableHTML(txns, opts = {}) {
           <td class="desc" title="${esc(t.description)}">${esc(t.description)}</td>
           ${editable ? `<td><select class="cat-select" data-id="${t.id}">${catOptions(t.category)}</select></td>` : ''}
           <td class="num ${t.amount < 0 ? 'neg' : 'pos'}">${fmtMoney(t.amount)}</td>
+          ${editable ? `<td class="num"><button class="txn-del" data-id="${t.id}" title="Delete (soft — restorable)" onclick="deleteTxn(${t.id}, this)">×</button></td>` : ''}
         </tr>`).join('')}
       </tbody>
     </table>`;
+}
+
+/* Soft-delete a transaction: hidden everywhere, imported row untouched,
+ * restorable via POST /api/transactions/{id}/restore. */
+async function deleteTxn(id, btn) {
+  if (!confirm('Delete this transaction?\n(Soft delete — the import stays in the database and it can be restored.)')) return;
+  if (btn) { btn.closest('tr').style.opacity = '.35'; }
+  try {
+    await api('/api/transactions/' + id, { method: 'DELETE' });
+    toast('Transaction deleted');
+    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  } catch (e) {
+    toast('Delete failed: ' + e.message, 5000);
+    if (btn) btn.closest('tr').style.opacity = '';
+  }
 }
 
 function catOptions(sel) {
