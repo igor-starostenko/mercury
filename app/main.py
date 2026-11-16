@@ -53,6 +53,12 @@ async def lifespan(_: FastAPI):
         if moved:
             print(f"  migrated    : moved {moved} pre-override categories "
                   f"to category_overrides")
+        # One-time: attribute legacy overrides (no recorded source) to
+        # 'llm' where their category matches the auto-classify fallback.
+        attributed = ingest.backfill_override_source(con)
+        if attributed:
+            print(f"  backfilled  : attributed {attributed} legacy overrides "
+                  f"to 'llm'")
     finally:
         con.close()
     yield
