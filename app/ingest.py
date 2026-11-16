@@ -388,14 +388,21 @@ def parse_file_bytes(name: str, data: bytes
 
 
 def merge_txns(con: duckdb.DuckDBPyConnection,
-               txns: list[Txn]) -> tuple[int, int]:
+               txns: list[Txn],
+               rules: Optional[list] = None) -> tuple[int, int]:
     """Merge parsed transactions into the table by stable key.
 
     Rows whose key already exists (from any earlier upload) are skipped, so
     existing rows — including manual/LLM categories — are never touched.
     Uploads are idempotent: re-sending the same file adds nothing.
+
+    ``rules`` (a rules.Rule list, id order) overrides the parsed category
+    on NEW rows only: if a rule matches the description, that category
+    wins even over a CSV-provided one.
+
     Returns (total_rows, new_rows).
     """
+    from . import rules as rule_mod  # local import: no cycle at module load
     con.execute(CREATE_TABLE_SQL)
     existing = {k for (k,) in con.execute(
         "SELECT key FROM transactions").fetchall()}
@@ -404,6 +411,10 @@ def merge_txns(con: duckdb.DuckDBPyConnection,
     for t in txns:
         if t.key not in existing and t.key not in seen:
             seen.add(t.key)
+            if rules:
+                cat = rule_mod.match_category(t.description, rules)
+                if cat:
+                    t.category = cat
             new.append(t)
     if new:
         # Continue the id sequence; ids from earlier rebuilds/merges are
