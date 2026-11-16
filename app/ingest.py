@@ -67,6 +67,16 @@ def build_key(source: str, account: str, d: date, amount: float,
     return f"{source}|{account}|{d.isoformat()}|{round(amount, 2)}|{norm_desc}"
 
 
+@dataclass
+class ParseResult:
+    """Outcome of parsing one uploaded CSV."""
+    txns: list[Txn] = field(default_factory=list)
+    source: Optional[str] = None       # institution name, or None
+    error: Optional[str] = None        # why the file could not be imported
+    needs_source: bool = False         # bank unknown -> caller should ask
+    note: Optional[str] = None         # how the bank was resolved (UI)
+
+
 # ---------------------------------------------------------------------------
 # Parsing helpers
 # ---------------------------------------------------------------------------
@@ -341,6 +351,50 @@ def detect_parser(path: Path) -> Optional[tuple[callable, str]]:
     return None
 
 
+# Canonical bank names, in display order (Wells Fargo, US Bank, Apple Card,
+# Chase) — served to the UI so it can offer them in the bank picker.
+KNOWN_BANKS: list[str] = []
+for _k, _v in SOURCES.items():
+    if _v not in KNOWN_BANKS:
+        KNOWN_BANKS.append(_v)
+
+# Header signatures for filenames that carry no bank name. Ordered: the first
+# bank whose marker matches wins. A bank matches when ANY of its marker sets
+# is a subset of the (lowercased) header names. Markers are columns distinctive
+# to one institution in either the real bank export or the sample format;
+# nothing is matched on generic columns alone (Date/Description/Amount).
+HEADER_SIGNATURES: list[tuple[str, tuple[set[str], ...]]] = [
+    ("apple card", ({"clearing date"}, {"amount (usd)"}, {"currency"})),
+    ("wells fargo", ({"check #"}, {"status"}, {"payment type"})),
+    ("chase", ({"post date"}, {"transaction date"})),
+    ("us bank", ({"name", "transaction", "memo"},)),  # trailing comma: 1-tuple
+]
+
+
+def detect_from_headers(header_line: str) -> Optional[str]:
+    """Return the parser key if the CSV header identifies exactly one bank.
+
+    Best-effort: files with only generic headers (Date/Description/Amount)
+    return None and are left to the user's choice in the UI.
+    """
+    line = (header_line or "").lstrip("\ufeff").strip()
+    if not line:
+        return None
+    try:
+        fieldnames = next(csv.reader(line.splitlines()), [])
+    except csv.Error:
+        return None
+    headers = {h.strip().lower() for h in fieldnames if h.strip()}
+    if not headers:
+        return None
+    for key, marker_sets in HEADER_SIGNATURES:
+        if isinstance(marker_sets, set):  # tolerate a bare set entry
+            marker_sets = (marker_sets,)
+        if any(m <= headers for m in marker_sets):
+            return key
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Import / load into DuckDB
 # ---------------------------------------------------------------------------
@@ -361,30 +415,60 @@ CREATE_TABLE_SQL = """
 """
 
 
-def parse_file_bytes(name: str, data: bytes
-                     ) -> tuple[list[Txn], Optional[str], Optional[str]]:
+def parse_file_bytes(name: str, data: bytes,
+                     source: Optional[str] = None) -> ParseResult:
     """Parse one uploaded CSV.
 
-    The parser is chosen from the filename (same rules as detect_parser),
-    so uploads must be named like bank exports, e.g. "WF-Checking.csv" or
-    "chase_2025-10_to_2025-12.csv".
+    Bank resolution order:
+      1. filename token (same rules as detect_parser) — the filename wins;
+      2. CSV header signature (detect_from_headers) — distinctive columns
+         like "Post Date" (Chase) or "Amount (USD)" (Apple Card);
+      3. the ``source`` hint the user picked in the UI (any name in
+         KNOWN_BANKS).
 
-    Returns (txns, source, error): on success error is None and source is
-    the institution name; on failure txns is empty and error says why.
+    If none of those resolves the bank, the result has needs_source=True
+    (and an error) so the caller can ask which bank the file belongs to and
+    resubmit it with a hint.
     """
-    hit = detect_parser(Path(name))
-    if hit is None:
-        return [], None, "no known format in filename"
-    fn, source = hit
+    p_path = Path(name)
+    fn: Optional[callable] = None
+    src: Optional[str] = None
+    note: Optional[str] = None
+    hit = detect_parser(p_path)
+    if hit is not None:
+        fn, src = hit
+        note = "filename"
+    else:
+        head = data[:64]
+        if head.startswith(b"\xef\xbb\xbf"):
+            head = head[3:]
+        first_line = head.split(b"\n", 1)[0].decode("utf-8", "replace")
+        key = detect_from_headers(first_line)
+        if key is not None:
+            fn, src = PARSERS[key], SOURCES[key]
+            note = "inferred from file header"
+        elif source:
+            norm = source.strip().lower()
+            match = next((k for k, v in SOURCES.items()
+                          if v.lower() == norm), None)
+            if match is None:
+                return ParseResult(
+                    error=f"unknown bank: {source}", needs_source=True)
+            fn, src = PARSERS[match], SOURCES[match]
+            note = "bank chosen in UI"
+        else:
+            return ParseResult(error="no known bank in filename",
+                               needs_source=True)
     # The parsers take a path (they infer the account from the filename),
     # so stage the bytes in a temp file under the original name.
     with tempfile.TemporaryDirectory() as td:
-        p = Path(td) / f"{Path(name).stem or 'upload'}.csv"
+        p = Path(td) / f"{p_path.stem or 'upload'}.csv"
         p.write_bytes(data)
         try:
-            return fn(p, source), source, None
+            return ParseResult(txns=fn(p, src), source=src, note=note)
         except Exception as e:  # one malformed file must not sink the batch
-            return [], source, f"parse error: {e}"
+            return ParseResult(source=src, error=f"parse error: {e}",
+                               note=note)
 
 
 def merge_txns(con: duckdb.DuckDBPyConnection,
