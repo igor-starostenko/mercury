@@ -65,6 +65,8 @@ main { padding: 22px 24px 48px; max-width: 1240px; margin: 0 auto; }
   text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
 }
 .section-head .hint { color: var(--muted); font-size: 12px; opacity: .75; }
+.section-head button { align-self: center; }
+.section-head button:disabled { opacity: .45; cursor: default; }
 
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }
 .panel.tight { padding: 0; overflow: hidden; }

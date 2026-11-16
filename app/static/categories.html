@@ -38,6 +38,7 @@
     <div class="section-head">
       <h2>Uncategorized transactions</h2>
       <span class="badge" id="unknownCount"></span>
+      <button class="primary" id="classifyBtn" onclick="runClassify()">Classify unknown (LLM)</button>
     </div>
     <div class="panel tight" id="unknown"></div>
   </section>
@@ -131,6 +132,7 @@ async function renderAll() {
 
   // Uncategorized list (global, newest first).
   $id('unknownCount').textContent = unknown.length + ' shown';
+  $id('classifyBtn').disabled = !unknown.length;
   const unknownTxns = unknown.map(u => ({ ...u, category: 'Uncategorized' }));
   $id('unknown').innerHTML = unknownTxns.length
     ? txnTableHTML(unknownTxns)
