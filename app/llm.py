@@ -20,12 +20,25 @@ from typing import Optional
 import urllib.request
 import urllib.error
 
-# Standard category vocabulary the UI dropdown offers.
+# Standard category vocabulary: what the auto-classifier may return and
+# what the rules panel may target.
 STANDARD_CATEGORIES = [
     "Groceries", "Dining", "Transportation", "Housing", "Utilities",
     "Subscriptions", "Entertainment", "Shopping", "Travel", "Health",
-    "Insurance", "Investing", "Income", "Fees", "Transfers", "Other",
+    "Insurance", "Investing", "Income", "Fees", "Transfers",
+    "Donations", "Education", "Other",
 ]
+
+# Reserved category: a row marked "Ignored" (by a rule or by hand) is
+# excluded from every aggregate (spend, income, net, accounts, periods)
+# but stays visible in transaction lists. Ignoring is a human judgment,
+# not a merchant guess, so the LLM never returns it; it is appended to
+# the pickable list only (UI_CATEGORIES).
+IGNORED_CATEGORY = "Ignored"
+
+# What /api/standard-categories returns: every category a UI dropdown
+# offers (manual assign, rule targets) plus the reserved "Ignored".
+UI_CATEGORIES = STANDARD_CATEGORIES + [IGNORED_CATEGORY]
 
 DEFAULT_ENDPOINT = os.environ.get("MERCURY_LLM_ENDPOINT", "http://localhost:11434/v1/chat/completions")
 DEFAULT_MODEL = os.environ.get("MERCURY_LLM_MODEL", "llama3.2")
@@ -137,6 +150,10 @@ _RULES: list[tuple[str, tuple[str, ...]]] = [
     ("Fees", ("fee", "interest", "atm", "service charge")),
     ("Income", ("payroll", "paycheck", "deposit", "refund", "interest earned",
                 "dividend", "salary")),
+    ("Donations", ("donat", "charity", "charitable", "goodwill", "red cross",
+                   "unicef", "world vision")),
+    ("Education", ("tuition", "university", "college", "school", "regents",
+                   "chegg", "udemy", "coursera", "pluralsight", "tutoring")),
     ("Transfers", ("transfer", "internal", "from checking")),
 ]
 

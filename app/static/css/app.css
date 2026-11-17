@@ -112,6 +112,15 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .badge.src-llm { background: rgba(79, 140, 255, .16); color: var(--accent); }
 .badge.src-rule { background: rgba(255, 193, 77, .14); color: #ffc14d; }
 .badge.src-uncategorized { background: rgba(138, 144, 162, .16); color: var(--muted); }
+/* Reserved "Ignored" category: rows stay visible but dimmed, with a tag
+ * explaining they are out of every total. */
+.txn-ignored td { opacity: .55; }
+.txn-ignored .desc { text-decoration: line-through; }
+.ignored-tag { display: block; margin-top: 3px; font-size: 10.5px;
+  font-style: italic; color: var(--muted); }
+.badge-ignored { background: rgba(138, 144, 162, .18); color: var(--muted);
+  font-weight: 600; }
+.rule-ignored .desc { color: var(--muted); }
 .was-cat { display: block; font-size: 10.5px; color: var(--muted); margin-top: 2px; }
 .ov-filters { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
 .ov-chip { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 20px; font-size: 11.5px; padding: 3px 12px; cursor: pointer; }
