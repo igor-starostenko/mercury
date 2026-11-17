@@ -136,7 +136,7 @@ async function renderAll() {
   // Category totals with drill-down.
   renderCategoryTable($id('catTable'), cats, {});
 
-  // Custom category rules (keyword -> category bulk override).
+  // Custom category rules (keyword -> category, applied at read time).
   renderRules(ruleData);
 
   // Merged categorization list: overrides + still-uncategorized rows.
