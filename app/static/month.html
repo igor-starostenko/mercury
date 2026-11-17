@@ -86,10 +86,11 @@ function monthWeeks(month) {
 
 async function renderMonth(month) {
   curMonth = month;
-  const [weekly, cats, txns] = await Promise.all([
+  const [weekly, cats, txns, sum] = await Promise.all([
     api('/api/weekly?month=' + encodeURIComponent(month)),
     api('/api/categories?month=' + encodeURIComponent(month)),
     api('/api/transactions?month=' + encodeURIComponent(month) + '&limit=5000'),
+    api('/api/summary?month=' + encodeURIComponent(month)),
   ]);
 
   // Summary cards from the complete weekly aggregates.
@@ -119,7 +120,9 @@ async function renderMonth(month) {
   $id('txnCount').textContent = txns.length + ' transactions';
   $id('txnTable').innerHTML = txnTableHTML(txns);
   wireCategorySelects($id('txnTable'));
-  setRangeSub(monthLong(month));
+  setRangeSub(sum.n_transactions
+    ? `${sum.first_date} → ${sum.last_date} · ${sum.n_transactions} transaction${sum.n_transactions === 1 ? '' : 's'} · ${sum.n_accounts} account${sum.n_accounts === 1 ? '' : 's'}`
+    : `no transactions in ${monthLong(month)}`);
 }
 
 (async function init() {

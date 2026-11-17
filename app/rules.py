@@ -1,16 +1,17 @@
 """User-defined category rules: keyword in description -> category.
 
-Rules are the user's bulk override mechanism. A rule matches when its
-pattern occurs (case-insensitive substring) in a transaction's
-description. Rules are evaluated in id order (creation order) and the
-FIRST match wins.
+Rules are a pure read-time layer: a rule matches when its pattern occurs
+(case-insensitive substring) in a transaction's description, and the
+effective_transactions view (ingest.py) applies the FIRST matching
+enabled rule (id order) whenever it computes an effective category.
+Rules write nothing per-row: saving, editing or deleting a rule
+instantly reshapes every report, and the original import is never
+touched.
 
-Precedence, everywhere: any user assignment (rule, LLM, manual edit)
-lives in the category_overrides table and beats the CSV-provided
-category stored in the row itself; among user assignments the last
-write wins. The original import in transactions.category is never
-rewritten. "Apply" writes the winning rule's category as an override
-for every matching row; new uploads get rule overrides at insert time.
+Precedence, everywhere: an explicit assignment in category_overrides
+(manual edit, LLM auto-classify, or a legacy 'rule' override written
+before rules became read-time) beats the rule layer; the rule layer
+beats an LLM override; everything beats the CSV-provided category.
 """
 from __future__ import annotations
 
@@ -107,66 +108,21 @@ def delete_rule(con: duckdb.DuckDBPyConnection, rule_id: int) -> bool:
     return (cur.rowcount or 0) > 0
 
 
-def rule_stats(con: duckdb.DuckDBPyConnection,
-               rules: list[Rule]) -> tuple[dict[int, int], int]:
-    """Exact preview of an apply run.
+def match_counts(con: duckdb.DuckDBPyConnection,
+                 rules: list[Rule]) -> dict[int, int]:
+    """How many transactions each rule's pattern matches (per rule).
 
-    Returns (per-rule match counts, total rows whose category would
-    change). Match counts are per-pattern (a row can match several
-    patterns); the change total honours first-match precedence,
-    compared against the effective (override-aware) category, and
-    excludes soft-deleted rows.
+    Counts are per-pattern — one row can match several patterns — so
+    they are a display aid, not a total of effective re-categorizations
+    (the view applies first-match precedence). Soft-deleted rows are
+    excluded via the effective_transactions view.
     """
     matches: dict[int, int] = {r.id: 0 for r in rules}
-    would_change = 0
     if rules:
-        for _id, desc, cat in con.execute(
-                "SELECT id, description, category "
-                "FROM effective_transactions").fetchall():
+        for _id, desc in con.execute(
+                "SELECT id, description FROM effective_transactions").fetchall():
             d = (desc or "").lower()
-            final = None
             for r in rules:
                 if r.pattern.lower() in d:
                     matches[r.id] += 1
-                    if final is None:
-                        final = r.category
-            if final is not None and final != cat:
-                would_change += 1
-    return matches, would_change
-
-
-def apply_rules(con: duckdb.DuckDBPyConnection,
-                rules: list[Rule]) -> int:
-    """Set the winning rule's category on every matching row.
-
-    Categories are written to the override table, which takes
-    precedence over the imported (CSV) category — the original import
-    in transactions.category is never rewritten. Returns the number of
-    rows whose effective category actually changed.
-    """
-    if not rules:
-        return 0
-    updates: list[tuple] = []
-    for tid, desc, cat in con.execute(
-            "SELECT id, description, category "
-            "FROM effective_transactions").fetchall():
-        final = match_category(desc, rules)
-        if final is not None and final != cat:
-            updates.append((tid, final))
-    if updates:
-        # One transaction: a mid-apply failure must not leave half the
-        # rows re-categorized.
-        con.execute("BEGIN TRANSACTION")
-        try:
-            con.executemany(
-                "INSERT INTO category_overrides VALUES (?, ?, 'rule') "
-                "ON CONFLICT (txn_id) DO UPDATE SET category = excluded.category, "
-                "source = excluded.source", updates)
-            con.executemany(
-                "UPDATE transactions SET classified = true WHERE id = ?",
-                [(tid,) for tid, _ in updates])
-            con.execute("COMMIT")
-        except Exception:
-            con.execute("ROLLBACK")
-            raise
-    return len(updates)
+    return matches

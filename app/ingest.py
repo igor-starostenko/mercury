@@ -419,17 +419,20 @@ CREATE_TABLE_SQL = """
 """
 
 # ---------------------------------------------------------------------------
-# Originals stay untouched: user overrides and deletions live in separate
-# tables that layer on top of the imported rows.
+# Originals stay untouched: user actions live in separate tables and rules
+# live in a read-time layer, so the imported rows are never rewritten.
 #
 #   transactions.category        -> exactly what the CSV import produced
-#   category_overrides           -> user-set category (manual, LLM, rule),
-#                                   takes precedence over the original
+#   category_overrides           -> explicit assignments (manual, LLM, or
+#                                   legacy rule rows from before rules
+#                                   became read-time)
+#   category_rules               -> keyword -> category rules, applied at
+#                                   read time (no per-row writes)
 #   deleted_transactions         -> soft-deleted rows (hidden from all reads)
 #
-# Every read goes through the effective_transactions view, which joins the
-# two override tables: effective category = override if present, else the
-# original; deleted rows are filtered out.
+# Every read goes through the effective_transactions view, which layers:
+# explicit override (manual or legacy rule) > first matching enabled rule
+# > LLM override > original CSV category. Deleted rows are filtered out.
 # ---------------------------------------------------------------------------
 CREATE_OVERRIDES_SQL = """
     CREATE TABLE IF NOT EXISTS category_overrides (
@@ -461,13 +464,30 @@ CREATE_DELETED_SQL = """
 
 CREATE_EFFECTIVE_VIEW_SQL = """
     CREATE OR REPLACE VIEW effective_transactions AS
-    SELECT t.id, t.source, t.account, t.txn_date, t.amount, t.description,
-           COALESCE(o.category, t.category) AS category,
-           o.source AS override_source,
-           t.raw_category, t.currency, t.key, t.classified
-    FROM transactions AS t
-    LEFT JOIN category_overrides AS o ON o.txn_id = t.id
-    WHERE t.id NOT IN (SELECT txn_id FROM deleted_transactions)
+    SELECT x.id, x.source, x.account, x.txn_date, x.amount, x.description,
+           CASE
+             WHEN x.override_source IN ('manual', 'rule')
+               THEN x.override_category
+             WHEN x.rule_category IS NOT NULL THEN x.rule_category
+             ELSE COALESCE(x.override_category, x.category)
+           END AS category,
+           CASE
+             WHEN x.override_source IN ('manual', 'rule')
+               THEN x.override_source
+             WHEN x.rule_category IS NOT NULL THEN 'rule'
+             ELSE x.override_source
+           END AS override_source,
+           x.raw_category, x.currency, x.key, x.classified
+    FROM (
+      SELECT t.*, o.category AS override_category, o.source AS override_source,
+             (SELECT r.category FROM category_rules r
+              WHERE r.enabled AND r.pattern <> ''
+                AND instr(lower(t.description), lower(r.pattern)) > 0
+              ORDER BY r.id LIMIT 1) AS rule_category
+      FROM transactions AS t
+      LEFT JOIN category_overrides AS o ON o.txn_id = t.id
+      WHERE t.id NOT IN (SELECT txn_id FROM deleted_transactions)
+    ) AS x
 """
 
 
@@ -528,22 +548,19 @@ def parse_file_bytes(name: str, data: bytes,
 
 
 def merge_txns(con: duckdb.DuckDBPyConnection,
-               txns: list[Txn],
-               rules: Optional[list] = None) -> tuple[int, int]:
+               txns: list[Txn]) -> tuple[int, int]:
     """Merge parsed transactions into the table by stable key.
 
     Rows whose key already exists (from any earlier upload) are skipped, so
     existing rows — including manual/LLM categories — are never touched.
     Uploads are idempotent: re-sending the same file adds nothing.
 
-    ``rules`` (a rules.Rule list, id order) layers a category on top of
-    NEW rows when the rule matches the description — written to the
-    override table, which takes precedence over the CSV-provided
-    category stored in the row itself.
+    Categories are not written at insert time: the CSV-provided value is
+    stored as-is, and rules apply to new rows at read time through the
+    effective_transactions view, exactly like existing rows.
 
     Returns (total_rows, new_rows).
     """
-    from . import rules as rule_mod  # local import: no cycle at module load
     con.execute(CREATE_TABLE_SQL)
     con.execute(CREATE_OVERRIDES_SQL)
     ensure_override_source(con)
@@ -572,21 +589,6 @@ def merge_txns(con: duckdb.DuckDBPyConnection,
                   t.description, t.category, t.raw_category, t.currency,
                   t.key, bool(t.category)]
                  for i, t in enumerate(new, start=1)])
-            if rules:
-                # Rule matches are user overrides: they go into the
-                # override table, which takes precedence over the row's
-                # original category — same as manual/LLM assignments.
-                overrides = [
-                    (max_id + i, rule_mod.match_category(t.description, rules))
-                    for i, t in enumerate(new, start=1)
-                ]
-                overrides = [(tid, cat) for tid, cat in overrides if cat]
-                if overrides:
-                    con.executemany(
-                        "INSERT INTO category_overrides VALUES (?, ?, 'rule') "
-                        "ON CONFLICT (txn_id) DO UPDATE SET "
-                        "category = excluded.category, source = excluded.source",
-                        overrides)
             con.execute("COMMIT")
         except Exception:
             con.execute("ROLLBACK")
