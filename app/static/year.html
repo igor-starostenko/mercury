@@ -55,10 +55,11 @@ let flowChart = null;
 window.onDataChanged = () => renderYear($id('yearSel').value);
 
 async function renderYear(year) {
-  const [md, cats, allYears] = await Promise.all([
+  const [md, cats, allYears, sum] = await Promise.all([
     api('/api/monthly?year=' + encodeURIComponent(year)),
     api('/api/categories?year=' + encodeURIComponent(year)),
     api('/api/year-totals'),
+    api('/api/summary?year=' + encodeURIComponent(year)),
   ]);
 
   const y = allYears.find(d => d.year === year) ||
@@ -83,7 +84,9 @@ async function renderYear(year) {
   $id('chartHint').textContent = `${year} · click a bar for the month view`;
 
   renderCategoryTable($id('catTable'), cats, { year });
-  setRangeSub(`calendar year ${year}`);
+  setRangeSub(sum.n_transactions
+    ? `${sum.first_date} → ${sum.last_date} · ${sum.n_transactions} transaction${sum.n_transactions === 1 ? '' : 's'} · ${sum.n_accounts} account${sum.n_accounts === 1 ? '' : 's'}`
+    : `no transactions in ${year}`);
 }
 
 (async function init() {

@@ -106,8 +106,8 @@ async def upload(files: list[UploadFile] = File(...),
     con = get_con()
     report: list[dict] = []
     try:
-        # Custom rules override CSV categories on new rows (first match wins).
-        rules_list = rules.load_rules(con)
+        # No rule writes at import time: rules apply at read time, so new
+        # rows are shaped exactly like existing ones.
         for f in files:
             name = f.filename or "unnamed.csv"
             data = await f.read()
@@ -118,7 +118,7 @@ async def upload(files: list[UploadFile] = File(...),
                      "needs_source": res.needs_source, "note": res.note,
                      "banks": ingest.KNOWN_BANKS if res.needs_source else None}
             if res.error is None:
-                _, new = ingest.merge_txns(con, res.txns, rules=rules_list)
+                _, new = ingest.merge_txns(con, res.txns)
                 entry["new"] = new
             report.append(entry)
         total = con.execute(
@@ -131,10 +131,11 @@ async def upload(files: list[UploadFile] = File(...),
 
 
 @app.get("/api/summary")
-def summary():
+def summary(year: str | None = None, month: str | None = None):
+    """Totals for all data, or scoped to one year / one month."""
     con = get_con()
     try:
-        return analytics.summary(con)
+        return analytics.summary(con, year, month)
     finally:
         con.close()
 
@@ -213,17 +214,25 @@ def unknown(limit: int = 200):
 
 
 @app.get("/api/overrides")
-def overrides(limit: int = 200):
-    """Transactions with an explicit category override (newest first).
+def overrides(limit: int = 200, include_uncategorized: bool = False):
+    """Transactions with a category set — explicit or by live rule
+    (newest first).
 
-    Each row carries ``set_by`` — 'manual' (a user edit), 'llm'
-    (auto-classify) or 'rule' (custom category rule) — plus 'unknown'
-    for overrides set before source tracking existed, and the
-    CSV-provided ``original_category`` alongside the effective one.
+    Rule re-categorizations are read-time, so they appear here with
+    ``set_by`` = 'rule' without any stored override. ``set_by`` is
+    'manual' (a user edit), 'llm' (auto-classify) or 'rule' — plus
+    'unknown' for overrides set before source tracking existed — and
+    the CSV-provided ``original_category`` is shown alongside the
+    effective one.
+
+    With ``include_uncategorized=true`` the list also carries rows that
+    have no override, no rule match and were missing a category in the
+    CSV import; those have ``set_by = "uncategorized"`` (still
+    uncategorized).
     """
     con = get_con()
     try:
-        return analytics.override_rows(con, limit)
+        return analytics.override_rows(con, limit, include_uncategorized)
     finally:
         con.close()
 
@@ -256,31 +265,21 @@ def categorize(body: CategorizeBody):
 def classify():
     """Classify all currently-unknown transactions.
 
-    Custom rules run first (no LLM cost); the remaining unknowns go to the
-    local LLM (or its built-in rule fallback).
+    Rules already apply at read time (effective_transactions view), so
+    by definition no unknown matches a rule — each one goes straight to
+    the local LLM (or its built-in rule fallback).
     """
     con = get_con()
     try:
         unknown = analytics.unknown_categories(con, limit=100000)
         if not unknown:
             return {"classified": 0, "of": 0}
-        rules_list = rules.load_rules(con)
-        rest: list[dict] = []
+        results = llm.classify_batch_llm([u["description"] for u in unknown])
         updated = 0
-        for u in unknown:
-            cat = rules.match_category(u["description"], rules_list)
+        for u, cat in zip(unknown, results):
             if cat:
-                analytics.set_category(con, u["id"], cat, source="rule")
+                analytics.set_category(con, u["id"], cat, source="llm")
                 updated += 1
-            else:
-                rest.append(u)
-        if rest:
-            results = llm.classify_batch_llm(
-                [u["description"] for u in rest])
-            for u, cat in zip(rest, results):
-                if cat:
-                    analytics.set_category(con, u["id"], cat, source="llm")
-                    updated += 1
         con.commit()
         return {"classified": updated, "of": len(unknown)}
     finally:
@@ -346,19 +345,20 @@ class RuleBody(BaseModel):
 
 @app.get("/api/rules")
 def list_rules():
-    """Rules in evaluation order, with live match counts and an exact
-    preview of how many transactions 'Apply' would change."""
+    """Rules in evaluation order, with live per-rule match counts.
+
+    Rules are applied at read time, so nothing further has to happen
+    for them to take effect."""
     con = get_con()
     try:
         rule_list = rules.load_rules(con, enabled_only=False)
         enabled = [r for r in rule_list if r.enabled]
-        matches, would_change = rules.rule_stats(con, enabled)
+        matches = rules.match_counts(con, enabled)
         return {
             "rules": [{"id": r.id, "pattern": r.pattern,
                        "category": r.category, "enabled": r.enabled,
                        "matches": matches.get(r.id, 0)}
                       for r in rule_list],
-            "would_change": would_change,
         }
     finally:
         con.close()
@@ -385,23 +385,6 @@ def delete_rule(rule_id: int):
         if not rules.delete_rule(con, rule_id):
             raise HTTPException(status_code=404, detail="rule not found")
         return {"deleted": rule_id}
-    finally:
-        con.close()
-
-
-@app.post("/api/rules/apply")
-def apply_rules():
-    """Bulk-apply all enabled rules: every matching transaction gets the
-    winning rule's category as a category_overrides entry (which takes
-    precedence over the imported category; the original is untouched).
-    Returns the number of rows whose effective category actually
-    changed."""
-    con = get_con()
-    try:
-        rule_list = rules.load_rules(con)
-        updated = rules.apply_rules(con, rule_list)
-        con.commit()
-        return {"updated": updated, "rules": len(rule_list)}
     finally:
         con.close()
 

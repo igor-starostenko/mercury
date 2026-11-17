@@ -14,8 +14,8 @@ function renderChrome(active) {
   $id('site-header').innerHTML = `
     <header>
       <div class="brand">
-        <div class="mark">M</div>
-        <div><h1>Mercury</h1><div class="sub" id="range-sub"></div></div>
+      <div class="mark">M</div>
+      <div class="brand-text"><h1>Mercury</h1><div class="sub" id="range-sub"></div></div>
       </div>
       <nav>
         <a href="/" class="${active === 'home' ? 'active' : ''}">Overview</a>
@@ -45,7 +45,9 @@ function renderChrome(active) {
 
 function setRangeSub(text) {
   const el = $id('range-sub');
-  if (el) el.textContent = text;
+  if (!el) return;
+  el.textContent = text;
+  el.title = text; // full text on hover (sub may be ellipsized)
 }
 
 /* -------------------------------------------------------------------- upload */
@@ -332,7 +334,7 @@ function wireCategorySelects(root) {
 }
 
 /* ------------------------------------------------------------- custom rules */
-/* Keyword-in-description -> category bulk override. Data: {rules, would_change}. */
+/* Keyword-in-description -> category, applied at read time. Data: {rules}. */
 function renderRules(data) {
   const el = $id('rulesPanel');
   if (!el) return;
@@ -358,12 +360,7 @@ function renderRules(data) {
       </select>
       <button type="submit">Add rule</button>
     </form>
-    ${list}
-    <div class="rule-apply">
-      <button class="primary" ${data.rules.length ? '' : 'disabled'}
-              onclick="applyRules()">Apply rules to all transactions${data.would_change ? ` — ${data.would_change} will change` : ''}</button>
-      <span class="hint">Apply overwrites the current category of every matching row (CSV, LLM or manual).</span>
-    </div>`;
+    ${list}`;
 }
 
 async function addRule(e) {
@@ -392,15 +389,4 @@ async function deleteRule(id) {
   } catch (err) {
     toast('Delete failed: ' + err.message, 5000);
   }
-}
-
-async function applyRules() {
-  toast('Applying rules…');
-  try {
-    const res = await api('/api/rules/apply', { method: 'POST' });
-    toast(`Rules applied — ${res.updated} transaction${res.updated === 1 ? '' : 's'} updated`);
-  } catch (err) {
-    toast('Apply failed: ' + err.message, 6000);
-  }
-  if (window.onDataChanged) setTimeout(onDataChanged, 400);
 }

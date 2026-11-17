@@ -148,17 +148,28 @@ def available_periods(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     }
 
 
-def summary(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
-    total = con.execute("""
+def summary(con: duckdb.DuckDBPyConnection,
+            year: str | None = None,
+            month: str | None = None) -> dict[str, Any]:
+    """Whole-database totals, optionally scoped to a year or month.
+
+    ``n_accounts`` counts distinct (source, account) pairs, not account
+    names — two banks that both call their account "Checking" are two
+    accounts.
+    """
+    where, params = _date_filter(year, month)
+    clause = "WHERE " + where[4:].strip() if where else ""
+    total = con.execute(f"""
         SELECT COUNT(*),
                COALESCE(SUM(amount),0) AS net,
                COALESCE(SUM(amount) FILTER (amount < 0), 0) AS spend,
                COALESCE(SUM(amount) FILTER (amount > 0), 0) AS income,
                MIN(txn_date), MAX(txn_date),
                COUNT(DISTINCT source),
-               COUNT(DISTINCT account)
+               COUNT(DISTINCT (source, account))
         FROM effective_transactions
-    """).fetchone()
+        {clause}
+    """, params).fetchone()
     return {
         "n_transactions": total[0],
         "net": round(total[1], 2),
@@ -206,8 +217,9 @@ def set_category(con: duckdb.DuckDBPyConnection, txn_id: int,
     The imported row keeps its CSV-provided category untouched; the
     override table takes precedence in every read. ``category=None``
     removes the override, reverting the row to its original category.
-    ``source`` records who set it: 'manual' (user edit), 'llm'
-    (auto-classify) or 'rule' (custom category rule).
+    ``source`` records who set it: 'manual' (user edit) or 'llm'
+    (auto-classify). 'rule' appears only in legacy overrides written
+    before rules became a read-time layer.
     """
     if category is None or str(category).strip() == "":
         con.execute("DELETE FROM category_overrides WHERE txn_id = ?",
@@ -235,31 +247,41 @@ def set_category_by_key(con: duckdb.DuckDBPyConnection, key: str,
 
 
 def override_rows(con: duckdb.DuckDBPyConnection,
-                  limit: int = 200) -> list[dict[str, Any]]:
-    """Transactions carrying an explicit override (newest first).
+                  limit: int = 200,
+                  include_uncategorized: bool = False) -> list[dict[str, Any]]:
+    """Transactions whose category is set — explicit or by rule (newest first).
 
-    Each row carries ``category`` (effective, the override),
-    ``original_category`` (the CSV import, untouched) and ``set_by``:
-    'manual', 'llm', 'rule' — or 'unknown' for overrides that predate
-    source tracking. Soft-deleted rows are excluded.
+    Built on the effective_transactions view, so rows re-categorized by a
+    live rule are included with ``set_by`` = 'rule' even though no
+    override row was written for them. Each row carries ``category``
+    (effective) and ``original_category`` (the CSV import, untouched);
+    ``set_by`` is 'manual', 'llm' or 'rule' — or 'unknown' for
+    overrides that predate source tracking.
+
+    With ``include_uncategorized``, rows that have no override, no rule
+    match and were missing a category in the CSV import are included as
+    well, with ``set_by`` = 'uncategorized' (still uncategorized).
     """
     rows = con.execute("""
-        SELECT t.id, t.source, t.account, CAST(t.txn_date AS VARCHAR),
-               t.amount, t.description,
-               COALESCE(o.category, t.category),
-               t.category, o.source
-        FROM transactions AS t
-        JOIN category_overrides AS o ON o.txn_id = t.id
-        WHERE t.id NOT IN (SELECT txn_id FROM deleted_transactions)
-        ORDER BY t.txn_date DESC, t.id DESC
+        SELECT v.id, v.source, v.account, CAST(v.txn_date AS VARCHAR),
+               v.amount, v.description, v.category, t.category,
+               v.override_source,
+               (t.category IS NULL OR t.category = ''
+                OR t.category = 'Uncategorized') AS missing_csv
+        FROM effective_transactions AS v
+        JOIN transactions AS t ON t.id = v.id
+        WHERE v.override_source IS NOT NULL
+           OR (? = 1 AND missing_csv)
+        ORDER BY v.txn_date DESC, v.id DESC
         LIMIT ?
-    """, [limit]).fetchall()
+    """, [int(include_uncategorized), limit]).fetchall()
     return [
         {"id": r[0], "source": r[1], "account": r[2], "date": r[3],
          "amount": r[4], "description": r[5],
          "category": _display_category(r[6]),
          "original_category": r[7],
-         "set_by": r[8] or "unknown"}
+         "set_by": ("uncategorized" if r[8] is None and r[9]
+                    else (r[8] or "unknown"))}
         for r in rows
     ]
 
@@ -300,33 +322,32 @@ def transactions(con: duckdb.DuckDBPyConnection,
     """Individual transactions for a date range (newest first).
 
     ``category`` matches the normalized name as displayed ('Uncategorized'
-    for rows with no category). ``original_category`` is the
-    CSV-provided category (what the import stored, before any user
-    override). Soft-deleted rows are excluded.
+    for rows with no category). The effective category comes from the
+    effective_transactions view, so the live rule layer is included;
+    ``original_category`` is the CSV-provided category (what the import
+    stored, before any assignment or rule). Soft-deleted rows are
+    excluded.
     """
     conds: list[str] = []
     params: list = []
     if month:
-        conds.append("strftime(txn_date, '%Y-%m') = ?")
+        conds.append("strftime(v.txn_date, '%Y-%m') = ?")
         params.append(month)
     elif year:
-        conds.append("strftime(txn_date, '%Y') = ?")
+        conds.append("strftime(v.txn_date, '%Y') = ?")
         params.append(year)
     if category:
-        conds.append("COALESCE(o.category, t.category, 'Uncategorized') = ?")
+        conds.append("COALESCE(v.category, 'Uncategorized') = ?")
         params.append(category)
-    # Explicit join (not the view) because the original, pre-override
-    # category is exposed alongside the effective one.
+    # The view carries the effective category (override + rule layer);
+    # transactions is joined only to expose the untouched CSV original.
     rows = con.execute(f"""
-        SELECT t.id, t.source, t.account, CAST(t.txn_date AS VARCHAR),
-               t.amount, t.description,
-               COALESCE(o.category, t.category),
-               t.category
-        FROM transactions AS t
-        LEFT JOIN category_overrides AS o ON o.txn_id = t.id
-        WHERE t.id NOT IN (SELECT txn_id FROM deleted_transactions)
-        {("AND " + " AND ".join(conds)) if conds else ""}
-        ORDER BY t.txn_date DESC, t.id DESC
+        SELECT v.id, v.source, v.account, CAST(v.txn_date AS VARCHAR),
+               v.amount, v.description, v.category, t.category
+        FROM effective_transactions AS v
+        JOIN transactions AS t ON t.id = v.id
+        {("WHERE " + " AND ".join(conds)) if conds else ""}
+        ORDER BY v.txn_date DESC, v.id DESC
         LIMIT ?
     """, [*params, limit]).fetchall()
     return [
