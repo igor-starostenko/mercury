@@ -12,6 +12,7 @@
 <body>
 <div id="site-header"></div>
 <main>
+  <div class="page-range" id="page-range"></div>
   <section class="section">
     <div class="toolbar">
       <label for="yearSel">Year</label>
@@ -84,9 +85,8 @@ async function renderYear(year) {
   $id('chartHint').textContent = `${year} · click a bar for the month view`;
 
   renderCategoryTable($id('catTable'), cats, { year });
-  setRangeSub(sum.n_transactions
-    ? `${sum.first_date} → ${sum.last_date} · ${sum.n_transactions} transaction${sum.n_transactions === 1 ? '' : 's'} · ${sum.n_accounts} account${sum.n_accounts === 1 ? '' : 's'}`
-    : `no transactions in ${year}`);
+  setRangeSub(totalsSub(sum, 'no transactions in ' + year));
+  setPageRange(sum.first_date, sum.last_date);
 }
 
 (async function init() {

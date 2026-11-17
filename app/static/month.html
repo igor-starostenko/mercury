@@ -12,6 +12,7 @@
 <body>
 <div id="site-header"></div>
 <main>
+  <div class="page-range" id="page-range"></div>
   <section class="section">
     <div class="toolbar">
       <label for="monthSel">Month</label>
@@ -120,9 +121,8 @@ async function renderMonth(month) {
   $id('txnCount').textContent = txns.length + ' transactions';
   $id('txnTable').innerHTML = txnTableHTML(txns);
   wireCategorySelects($id('txnTable'));
-  setRangeSub(sum.n_transactions
-    ? `${sum.first_date} → ${sum.last_date} · ${sum.n_transactions} transaction${sum.n_transactions === 1 ? '' : 's'} · ${sum.n_accounts} account${sum.n_accounts === 1 ? '' : 's'}`
-    : `no transactions in ${monthLong(month)}`);
+  setRangeSub(totalsSub(sum, 'no transactions in ' + monthLong(month)));
+  setPageRange(sum.first_date, sum.last_date);
 }
 
 (async function init() {

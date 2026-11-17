@@ -12,6 +12,7 @@
 <body>
 <div id="site-header"></div>
 <main>
+  <div class="page-range" id="page-range"></div>
   <div class="panel" id="emptyHint" style="display:none;margin-bottom:24px">
     <h2 style="margin:0 0 8px;font-size:16px">No transactions yet</h2>
     <p style="color:var(--muted);margin:0">Use <b>Import CSV files</b> or <b>Import folder</b> in the top bar to load
@@ -72,9 +73,8 @@ async function renderAll() {
   ]);
 
   $id('emptyHint').style.display = summary.n_transactions ? 'none' : 'block';
-  setRangeSub(summary.first_date
-    ? `${summary.first_date} → ${summary.last_date} · ${summary.n_transactions} transaction${summary.n_transactions === 1 ? '' : 's'} · ${summary.n_accounts} account${summary.n_accounts === 1 ? '' : 's'}`
-    : '');
+  setRangeSub(totalsSub(summary));
+  setPageRange(summary.first_date, summary.last_date);
 
   // All-time monthly flow (union of months with spend or income).
   const months = [...new Set([

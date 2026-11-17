@@ -50,6 +50,22 @@ function setRangeSub(text) {
   el.title = text; // full text on hover (sub may be ellipsized)
 }
 
+/* Header sub: scoped totals only. The date range lives in the in-page
+ * .page-range label, so the header keeps one stable shape on every page. */
+function totalsSub(s, fallback) {
+  const t = s && s.n_transactions, a = s ? s.n_accounts : 0;
+  return t
+    ? `${t} transaction${t === 1 ? '' : 's'} · ${a} account${a === 1 ? '' : 's'}`
+    : (fallback || '');
+}
+
+/* In-page scoped date range (top of page content): "first → last". */
+function setPageRange(first, last) {
+  const el = $id('page-range');
+  if (!el) return;
+  el.textContent = first && last ? `${first} → ${last}` : '';
+}
+
 /* -------------------------------------------------------------------- upload */
 let PENDING_FILES = new Map(); // filename -> File, kept so files that need a
                                // bank pick can be re-sent after the user chooses
