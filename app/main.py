@@ -331,8 +331,10 @@ def restore_transaction(txn_id: int):
 
 
 @app.get("/api/standard-categories")
-def standard_categories():
-    return llm.STANDARD_CATEGORIES
+async def standard_categories():
+    # Pickable categories for every UI dropdown: the standard vocabulary
+    # plus the reserved "Ignored" marker (rule targets or manual assigns).
+    return llm.UI_CATEGORIES
 
 
 # ---------------------------------------------------------------------------

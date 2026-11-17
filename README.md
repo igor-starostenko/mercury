@@ -78,7 +78,11 @@ background; the database only contains what you uploaded.
   (LLM)** button is on the Categories page, next to the
   categorization list.
 - `POST /api/categorize` — assign a standard category manually:
-  `{"ids": [1, 2], "category": "Groceries"}`.
+  `{"ids": [1, 2], "category": "Groceries"}`. `GET
+  /api/standard-categories` returns the full vocabulary — the standard
+  categories (including `Donations` and `Education`) plus the reserved
+  `Ignored` marker. The LLM classifier is prompted with everything
+  except `Ignored`: ignoring is a human judgment, not a merchant guess.
 
 ### Custom category rules
 
@@ -93,6 +97,16 @@ Precedence, in every report: an explicit assignment (manual edit, or a
 legacy `rule` override from before rules became read-time) > first
 matching rule > LLM assignment > CSV import. Re-picking a category on
 a rule-classified row marks it as yours and pins it against the rule.
+
+The rule's category can be the reserved value `"Ignored"` — it also
+appears in every category dropdown, so a single transaction can be
+ignored by hand. Ignored rows are excluded from every total (spend,
+income, net, account summaries, period lists) but stay visible in the
+transaction lists, dimmed and marked "ignored" — the intended tool for
+transfers between accounts and any other row that isn't real spend or
+income. `GET /api/transactions` rows carry an `"ignored": true` flag
+when this applies; deleting the rule (or picking a real category on the
+row) un-ignores it.
 
 - `GET /api/rules` — rules in evaluation order, with live per-rule
   match counts.

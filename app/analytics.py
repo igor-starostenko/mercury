@@ -13,6 +13,13 @@ from typing import Any
 
 # Amount sign convention: negative = money out (spend), positive = money in.
 
+# Row-level "ignore": a transaction whose effective category is the
+# reserved 'Ignored' value (set by a read-time rule or by hand) is
+# excluded from every aggregate below. It stays visible in
+# /api/transactions and /api/overrides, flagged ignored=true — that is
+# what ignoring means for transfers between accounts and the like.
+NOT_IGNORED = "COALESCE(category, '') <> 'Ignored'"
+
 
 def monthly_spend(con: duckdb.DuckDBPyConnection,
                   year: str | None = None) -> list[dict[str, Any]]:
@@ -24,7 +31,7 @@ def monthly_spend(con: duckdb.DuckDBPyConnection,
             SUM(amount) AS spend,
             COUNT(*) AS n
         FROM effective_transactions
-        WHERE amount < 0 {where}
+        WHERE amount < 0 AND {NOT_IGNORED} {where}
         GROUP BY 1
         ORDER BY 1
     """, params).fetchall()
@@ -32,12 +39,12 @@ def monthly_spend(con: duckdb.DuckDBPyConnection,
 
 
 def spend_by_year(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
-    rows = con.execute("""
+    rows = con.execute(f"""
         SELECT
             strftime(txn_date, '%Y') AS year,
             SUM(amount) AS spend
         FROM effective_transactions
-        WHERE amount < 0
+        WHERE amount < 0 AND {NOT_IGNORED}
         GROUP BY 1
         ORDER BY 1
     """).fetchall()
@@ -54,7 +61,7 @@ def spend_by_category_month(con: duckdb.DuckDBPyConnection,
             COALESCE(category, 'Uncategorized') AS category,
             SUM(amount) AS spend
         FROM effective_transactions
-        WHERE amount < 0 {where}
+        WHERE amount < 0 AND {NOT_IGNORED} {where}
         GROUP BY 1, 2
         ORDER BY 1, 3 DESC
     """, params).fetchall()
@@ -72,7 +79,7 @@ def spend_by_category(con: duckdb.DuckDBPyConnection,
             SUM(amount) AS spend,
             COUNT(*) AS n
         FROM effective_transactions
-        WHERE amount < 0 {where}
+        WHERE amount < 0 AND {NOT_IGNORED} {where}
         GROUP BY 1
         ORDER BY 2 DESC
     """, params).fetchall()
@@ -87,7 +94,7 @@ def income_by_month(con: duckdb.DuckDBPyConnection,
             strftime(txn_date, '%Y-%m') AS month,
             SUM(amount) AS income
         FROM effective_transactions
-        WHERE amount > 0 {where}
+        WHERE amount > 0 AND {NOT_IGNORED} {where}
         GROUP BY 1
         ORDER BY 1
     """, params).fetchall()
@@ -96,13 +103,14 @@ def income_by_month(con: duckdb.DuckDBPyConnection,
 
 def year_totals(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
     """Per-year income/spend/net totals for the home page year cards."""
-    rows = con.execute("""
+    rows = con.execute(f"""
         SELECT
             strftime(txn_date, '%Y') AS year,
             COALESCE(SUM(amount) FILTER (amount < 0), 0) AS spend,
             COALESCE(SUM(amount) FILTER (amount > 0), 0) AS income,
             COUNT(*) AS n
         FROM effective_transactions
+        WHERE {NOT_IGNORED}
         GROUP BY 1
         ORDER BY 1
     """).fetchall()
@@ -118,14 +126,14 @@ def weekly_breakdown(con: duckdb.DuckDBPyConnection,
     weeks with activity outside the month are excluded by the filter, and
     the client zero-fills the calendar buckets.
     """
-    rows = con.execute("""
+    rows = con.execute(f"""
         SELECT
             date_trunc('week', txn_date) AS week,
             COALESCE(SUM(amount) FILTER (amount < 0), 0) AS spend,
             COALESCE(SUM(amount) FILTER (amount > 0), 0) AS income,
             COUNT(*) AS n
         FROM effective_transactions
-        WHERE strftime(txn_date, '%Y-%m') = ?
+        WHERE strftime(txn_date, '%Y-%m') = ? AND {NOT_IGNORED}
         GROUP BY 1
         ORDER BY 1
     """, [month]).fetchall()
@@ -135,10 +143,11 @@ def weekly_breakdown(con: duckdb.DuckDBPyConnection,
 
 def available_periods(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     """Distinct years and months present in the data (ascending)."""
-    rows = con.execute("""
+    rows = con.execute(f"""
         SELECT strftime(txn_date, '%Y') AS year,
                strftime(txn_date, '%Y-%m') AS month
         FROM effective_transactions
+        WHERE {NOT_IGNORED}
         GROUP BY 1, 2
         ORDER BY 2
     """).fetchall()
@@ -158,7 +167,7 @@ def summary(con: duckdb.DuckDBPyConnection,
     accounts.
     """
     where, params = _date_filter(year, month)
-    clause = "WHERE " + where[4:].strip() if where else ""
+    extra = " AND " + where[4:].strip() if where else ""
     total = con.execute(f"""
         SELECT COUNT(*),
                COALESCE(SUM(amount),0) AS net,
@@ -168,7 +177,7 @@ def summary(con: duckdb.DuckDBPyConnection,
                COUNT(DISTINCT source),
                COUNT(DISTINCT (source, account))
         FROM effective_transactions
-        {clause}
+        WHERE {NOT_IGNORED} {extra}
     """, params).fetchone()
     return {
         "n_transactions": total[0],
@@ -183,9 +192,10 @@ def summary(con: duckdb.DuckDBPyConnection,
 
 
 def accounts(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
-    rows = con.execute("""
+    rows = con.execute(f"""
         SELECT source, account, COUNT(*), COALESCE(SUM(amount),0)
         FROM effective_transactions
+        WHERE {NOT_IGNORED}
         GROUP BY 1, 2
         ORDER BY 1, 2
     """).fetchall()
@@ -267,7 +277,8 @@ def override_rows(con: duckdb.DuckDBPyConnection,
                v.amount, v.description, v.category, t.category,
                v.override_source,
                (t.category IS NULL OR t.category = ''
-                OR t.category = 'Uncategorized') AS missing_csv
+                OR t.category = 'Uncategorized') AS missing_csv,
+               (COALESCE(v.category, '') = 'Ignored') AS ignored
         FROM effective_transactions AS v
         JOIN transactions AS t ON t.id = v.id
         WHERE v.override_source IS NOT NULL
@@ -281,7 +292,8 @@ def override_rows(con: duckdb.DuckDBPyConnection,
          "category": _display_category(r[6]),
          "original_category": r[7],
          "set_by": ("uncategorized" if r[8] is None and r[9]
-                    else (r[8] or "unknown"))}
+                    else (r[8] or "unknown")),
+         "ignored": bool(r[10])}
         for r in rows
     ]
 
@@ -341,9 +353,12 @@ def transactions(con: duckdb.DuckDBPyConnection,
         params.append(category)
     # The view carries the effective category (override + rule layer);
     # transactions is joined only to expose the untouched CSV original.
+    # Ignored rows are NOT filtered out here — they stay visible, with
+    # an explicit ignored flag for the UI.
     rows = con.execute(f"""
         SELECT v.id, v.source, v.account, CAST(v.txn_date AS VARCHAR),
-               v.amount, v.description, v.category, t.category
+               v.amount, v.description, v.category, t.category,
+               (COALESCE(v.category, '') = 'Ignored') AS ignored
         FROM effective_transactions AS v
         JOIN transactions AS t ON t.id = v.id
         {("WHERE " + " AND ".join(conds)) if conds else ""}
@@ -354,7 +369,8 @@ def transactions(con: duckdb.DuckDBPyConnection,
         {"id": r[0], "source": r[1], "account": r[2], "date": r[3],
          "amount": r[4], "description": r[5],
          "category": _display_category(r[6]),
-         "original_category": r[7]}
+         "original_category": r[7],
+         "ignored": bool(r[8])}
         for r in rows
     ]
 

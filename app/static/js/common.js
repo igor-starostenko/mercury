@@ -5,8 +5,12 @@ const CAT_COLORS = {
   Housing: '#a55eea', Utilities: '#26de81', Subscriptions: '#ff6b6b',
   Entertainment: '#feca57', Shopping: '#48dbfb', Travel: '#1dd1a1',
   Health: '#576574', Insurance: '#c8d6e5', Investing: '#6ab04c',
-  Income: '#38c172', Fees: '#b33939', Transfers: '#8a90a2', Other: '#57606f',
+  Income: '#38c172', Fees: '#b33939', Transfers: '#8a90a2',
+  Donations: '#e84393', Education: '#2d98da', Other: '#57606f',
   Uncategorized: '#8a90a2',
+  // Reserved "Ignored" marker: deliberately muted — it is not a place
+  // money went, just a row excluded from the totals.
+  Ignored: '#8a90a2',
 };
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

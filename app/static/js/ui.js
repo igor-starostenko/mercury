@@ -297,11 +297,11 @@ function txnTableHTML(txns, opts = {}) {
         ${editable ? '<th style="width:34px"></th>' : ''}
       </tr></thead>
       <tbody>${txns.map(t => `
-        <tr>
+        <tr class="${t.ignored ? 'txn-ignored' : ''}">
           <td>${esc(t.date)}</td>
           <td>${esc(t.source)}</td>
           <td class="desc" title="${esc(t.description)}">${esc(t.description)}</td>
-          ${editable ? `<td><select class="cat-select" data-id="${t.id}">${catOptions(t.category)}</select></td>` : ''}
+          ${editable ? `<td><select class="cat-select" data-id="${t.id}">${catOptions(t.category)}</select>${t.ignored ? '<span class="ignored-tag">ignored — not counted in totals</span>' : ''}</td>` : ''}
           <td class="num ${t.amount < 0 ? 'neg' : 'pos'}">${fmtMoney(t.amount)}</td>
           ${editable ? `<td class="num"><button class="txn-del" data-id="${t.id}" title="Delete (soft — restorable)" onclick="deleteTxn(${t.id}, this)">×</button></td>` : ''}
         </tr>`).join('')}
@@ -359,9 +359,11 @@ function renderRules(data) {
       '<th>Keyword</th><th>→ Category</th><th class="num">Matches</th><th style="width:40px"></th>' +
       '</tr></thead><tbody>' +
       data.rules.map(r => `
-        <tr>
+        <tr class="${r.category === 'Ignored' ? 'rule-ignored' : ''}">
           <td class="desc" title="${esc(r.pattern)}">${esc(r.pattern)}</td>
-          <td><span class="dot" style="background:${CAT_COLORS[r.category] || '#57606f'}"></span>${esc(r.category)}</td>
+          <td>${r.category === 'Ignored'
+            ? '<span class="badge badge-ignored" title="Matching rows are excluded from all totals but stay visible">⊘ Ignored</span>'
+            : `<span class="dot" style="background:${CAT_COLORS[r.category] || '#57606f'}"></span>${esc(r.category)}`}</td>
           <td class="num">${r.matches}</td>
           <td class="num"><button class="rule-del" title="Delete rule" onclick="deleteRule(${r.id})">×</button></td>
         </tr>`).join('') +
@@ -370,7 +372,7 @@ function renderRules(data) {
   el.innerHTML = `
     <form class="rule-form" onsubmit="addRule(event)">
       <input id="rulePattern" type="text" maxlength="200" required
-             placeholder="Keyword, e.g. 'walmart'">
+             placeholder="Keyword, e.g. 'walmart' or 'internal transfer'">
       <select id="ruleCategory" required>
         ${CATS.map(c => `<option>${esc(c)}</option>`).join('')}
       </select>
