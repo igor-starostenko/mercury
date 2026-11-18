@@ -46,6 +46,7 @@ async def lifespan(_: FastAPI):
         ingest.ensure_override_source(con)
         con.execute(ingest.CREATE_DELETED_SQL)
         con.execute(rules.CREATE_RULES_SQL)
+        rules.ensure_rule_position(con)
         con.execute(ingest.CREATE_EFFECTIVE_VIEW_SQL)
         # One-time migration: move pre-override categories (rule/LLM/
         # manual) out of the imported rows into category_overrides.
@@ -345,6 +346,11 @@ class RuleBody(BaseModel):
     category: str
 
 
+class RuleReorderBody(BaseModel):
+    # Every rule id exactly once, highest priority first.
+    ordered_ids: list[int]
+
+
 @app.get("/api/rules")
 def list_rules():
     """Rules in evaluation order, with live per-rule match counts.
@@ -359,6 +365,7 @@ def list_rules():
         return {
             "rules": [{"id": r.id, "pattern": r.pattern,
                        "category": r.category, "enabled": r.enabled,
+                       "position": r.position,
                        "matches": matches.get(r.id, 0)}
                       for r in rule_list],
         }
@@ -375,7 +382,25 @@ def create_rule(body: RuleBody):
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         return {"id": r.id, "pattern": r.pattern,
-                "category": r.category, "enabled": True}
+                "category": r.category, "enabled": True,
+                "position": r.position}
+    finally:
+        con.close()
+
+
+@app.post("/api/rules/reorder")
+def reorder_rules(body: RuleReorderBody):
+    """Persist a new rule priority order (drag-and-drop in the UI).
+
+    The new order takes effect immediately — like every rule change,
+    it is a read-time layer and rewrites no transaction rows."""
+    con = get_con()
+    try:
+        try:
+            ordered = rules.reorder_rules(con, body.ordered_ids)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"order": [r.id for r in ordered]}
     finally:
         con.close()
 

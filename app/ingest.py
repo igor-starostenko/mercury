@@ -483,7 +483,7 @@ CREATE_EFFECTIVE_VIEW_SQL = """
              (SELECT r.category FROM category_rules r
               WHERE r.enabled AND r.pattern <> ''
                 AND instr(lower(t.description), lower(r.pattern)) > 0
-              ORDER BY r.id LIMIT 1) AS rule_category
+              ORDER BY r.position, r.id LIMIT 1) AS rule_category
       FROM transactions AS t
       LEFT JOIN category_overrides AS o ON o.txn_id = t.id
       WHERE t.id NOT IN (SELECT txn_id FROM deleted_transactions)

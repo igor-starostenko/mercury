@@ -93,6 +93,13 @@ per-row — no "apply" step, and the original import is never touched.
 Deleting a rule reverts the affected rows to whatever else classifies
 them (an explicit assignment, an LLM category, or the CSV value).
 
+Rule priority is the list order: rules are evaluated top to bottom and
+the first match wins. New rules append to the end (lowest priority);
+the UI rows in the rules and Ignore panels can be dragged to reorder —
+rows work across both panels, since the panels share one global
+priority list — and the order is persisted (`POST
+/api/rules/reorder`) and takes effect immediately.
+
 Precedence, in every report: an explicit assignment (manual edit, or a
 legacy `rule` override from before rules became read-time) > first
 matching rule > LLM assignment > CSV import. Re-picking a category on
@@ -114,7 +121,10 @@ row) un-ignores it.
   match counts.
 - `POST /api/rules` — add a rule: `{"pattern": "walmart",
   "category": "Groceries"}` (400 on empty/too-long fields or a
-  duplicate pattern).
+  duplicate pattern). Appends to the end of the priority list.
+- `POST /api/rules/reorder` — persist a new priority order:
+  `{"ordered_ids": [2, 1, 3]}` (every rule id exactly once, highest
+  priority first; 400 with "refresh and retry" on stale client state).
 - `DELETE /api/rules/{id}` — remove a rule (rows it classified revert
   immediately).
 
