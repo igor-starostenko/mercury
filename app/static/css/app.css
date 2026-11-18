@@ -29,11 +29,14 @@ header {
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
 }
-/* Fixed brand width: the range sub-line varies in length per page, and a
- * variable-width brand block makes the flex header re-wrap differently
- * between pages (visible layout jump). Stable geometry = no shift; the
- * sub gets an ellipsis rather than stretching the row. */
-.brand { display: flex; align-items: center; gap: 10px; flex: 0 1 340px; min-width: 132px; }
+/* Fixed brand width — but sized to the sub-line, not the page: the tabs must
+ * hug the logo (sr1us, post-PR-#21), so the old 340px basis — sized for the
+ * longer "N transactions · M accounts" sub — read as a dead gap. 240px fits
+ * the longest sub the pages can render ("no transactions in September 2026"
+ * = 179px text + 40px mark/gap, measured) with headroom; anything longer
+ * ellipsizes into the stable 240px box (full text on hover) instead of
+ * shifting the header between pages. */
+.brand { display: flex; align-items: center; gap: 10px; flex: 0 1 240px; min-width: 132px; }
 .brand .mark {
   width: 30px; height: 30px; border-radius: 8px; flex: none;
   background: linear-gradient(135deg, #4f8cff, #7b5cff);
@@ -48,17 +51,17 @@ header {
  * (dates moved out of the header). Fixed min-height so an empty scope
  * (no data yet) doesn't shift the layout. */
 .page-range { color: var(--muted); font-size: 12px; margin: 0 0 20px; min-height: 1.5em; }
-/* Nav is pushed to the right edge next to the import actions: a fixed-width
- * brand on the left + auto margin on the nav is what used to leave the tabs
- * floating in the middle of wide screens. */
-nav { display: flex; gap: 2px; margin-left: auto; }
+/* Nav sits left, directly after the brand (header gap:14px spaces it).
+ * Pushing it right next to the import buttons read as "floating in the
+ * middle" — moved left per sr1us; the import actions take the auto margin. */
+nav { display: flex; gap: 2px; }
 nav a {
   padding: 6px 12px; border-radius: 8px;
   color: var(--muted); font-size: 13px; font-weight: 500;
 }
 nav a:hover { color: var(--text); background: var(--panel-2); }
 nav a.active { color: var(--text); background: var(--panel-2); }
-.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.header-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 button, select {
   background: var(--panel-2); color: var(--text);
