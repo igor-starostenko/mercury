@@ -68,15 +68,19 @@ background; the database only contains what you uploaded.
   what every report starts from.
 - `POST /api/classify` — batch-classify remaining unknowns via a local
   LLM: any OpenAI-compatible endpoint works (Ollama, oMLX, LM Studio,
-  llama.cpp server, ...). Configure with `MERCURY_LLM_ENDPOINT` (default
-  `http://localhost:11434/v1/chat/completions` — Ollama),
+  llama.cpp server, ...). Configure with `MERCURY_LLM_ENDPOINT`
+  (default `http://localhost:11434/v1/chat/completions` — Ollama),
   `MERCURY_LLM_MODEL` (default `llama3.2`), and `MERCURY_LLM_API_KEY`
-  (sent as `Authorization: Bearer <key>` when set). "Ollama by default"
+  (sent as `Authorization: Bearer *** when set).
+  "Ollama by default"
   only means the default endpoint points at Ollama's OpenAI-compatible
-  API — nothing is required to be running: if the model is unreachable,
-  the built-in keyword rules classify instead. The **Classify unknown
-  (LLM)** button is on the Categories page, next to the
-  categorization list.
+  API — nothing is required to be running: if the endpoint is
+  **configured but unreachable**, the built-in keyword rules classify
+  instead. If `MERCURY_LLM_ENDPOINT` is not set at all, no fallback is
+  run: `GET /api/health` reports `llm_configured: false`, the
+  **Classify unknown (LLM)** button (Categories page, next to the
+  categorization list) is greyed out, and `POST /api/classify` returns
+  `503` with the setup hint.
 - `POST /api/categorize` — assign a standard category manually:
   `{"ids": [1, 2], "category": "Groceries"}`. `GET
   /api/standard-categories` returns the full vocabulary — the standard

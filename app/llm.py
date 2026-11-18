@@ -8,8 +8,11 @@ variables so nothing is hard-wired:
   MERCURY_LLM_MODEL     (default: llama3.2)
   MERCURY_LLM_API_KEY   (sent as "Authorization: Bearer ..." when set)
 
-Fallback: if no local model is reachable, fall back to a lightweight
-rule-based classifier so the feature still works offline.
+Fallback: if the endpoint is configured but unreachable, fall back to a
+lightweight rule-based classifier so the feature still works offline. If
+no endpoint is configured at all (MERCURY_LLM_ENDPOINT unset), no
+fallback runs: classify_batch_llm raises LLMNotConfigured and the UI
+greys out the Classify button.
 """
 from __future__ import annotations
 
@@ -44,14 +47,35 @@ DEFAULT_ENDPOINT = os.environ.get("MERCURY_LLM_ENDPOINT", "http://localhost:1143
 DEFAULT_MODEL = os.environ.get("MERCURY_LLM_MODEL", "llama3.2")
 
 
+class LLMNotConfigured(RuntimeError):
+    """Raised when classify is requested but no LLM endpoint is configured."""
+
+
+def llm_configured() -> bool:
+    """True when the user explicitly configured an LLM endpoint.
+
+    A set MERCURY_LLM_ENDPOINT is the signal that a model is meant to be
+    used; the default endpoint/model values are just placeholders.
+    """
+    return bool(os.environ.get("MERCURY_LLM_ENDPOINT"))
+
+
 def classify_batch_llm(descriptions: list[str]) -> list[Optional[str]]:
     """Classify a batch of descriptions via the local LLM.
 
     Returns a list the same length as `descriptions`; each entry is a
     standard category name or None if the model was unsure.
+
+    Raises LLMNotConfigured when no endpoint is configured (no silent
+    keyword fallback in that case). If the endpoint is configured but
+    unreachable, the deterministic keyword rules take over.
     """
     if not descriptions:
         return []
+    if not llm_configured():
+        raise LLMNotConfigured(
+            "LLM is not configured — set MERCURY_LLM_ENDPOINT (and "
+            "MERCURY_LLM_MODEL) and restart the server")
     try:
         return _call_local_llm(descriptions)
     except Exception as exc:  # noqa: BLE001
