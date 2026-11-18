@@ -289,7 +289,15 @@ function makeFlowChart(canvas, cfg) {
     interaction: { mode: 'index', intersect: false },
     plugins: {
       legend: { position: 'top', align: 'end',
-        labels: { color: '#8a90a2', usePointStyle: true, boxWidth: 8, boxHeight: 8 } },
+        labels: { color: '#8a90a2', usePointStyle: true, boxWidth: 8, boxHeight: 8,
+          // Stacked mode: a category active in BOTH spend and income gets
+          // two same-label datasets (one per stack) — show one legend
+          // entry per name (toggle still hits the first dataset).
+          generateLabels: chart => {
+            const items = Chart.defaults.plugins.legend.labels.generateLabels(chart);
+            const seen = new Set();
+            return items.filter(it => seen.has(it.text) ? false : (seen.add(it.text), true));
+          } } },
       tooltip: { callbacks: { label: c => ' ' + c.dataset.label + ': ' + fmtMoney(c.raw) } },
     },
     scales: {
