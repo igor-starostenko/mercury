@@ -34,6 +34,10 @@
   <section class="section">
     <div class="section-head">
       <h2>Monthly cash flow</h2>
+      <div class="seg" id="flowSeg" data-key="year" role="group" aria-label="Chart view">
+        <button type="button" data-mode="category">By category</button>
+        <button type="button" data-mode="totals">Totals</button>
+      </div>
       <span class="hint" id="chartHint"></span>
     </div>
     <div class="panel"><canvas id="flowChart"></canvas></div>
@@ -52,6 +56,8 @@
 
 <script>
 let flowChart = null;
+let _flowCfg = null; // last chart config, so the view toggle re-draws
+                     // without refetching
 
 window.onDataChanged = () => renderYear($id('yearSel').value);
 
@@ -77,11 +83,17 @@ async function renderYear(year) {
   // Twelve calendar months, zero-filled.
   const monthKeys = Array.from({ length: 12 }, (_, i) =>
     `${year}-${String(i + 1).padStart(2, '0')}`);
-  flowChart = makeFlowChart($id('flowChart'),
-    MONTHS_SHORT,
-    monthKeys.map(m => md.spend.find(d => d.month === m)?.spend || 0),
-    monthKeys.map(m => md.income.find(d => d.month === m)?.income || 0),
-    i => location.href = '/month?month=' + monthKeys[i]);
+  flowChart = makeFlowChart($id('flowChart'), _flowCfg = {
+    labels: MONTHS_SHORT,
+    keys: monthKeys,
+    spend: monthKeys.map(m => md.spend.find(d => d.month === m)?.spend || 0),
+    income: monthKeys.map(m => md.income.find(d => d.month === m)?.income || 0),
+    byCategory: (md.flow_by_category || []).map(r =>
+      ({ key: r.bucket, category: r.category,
+         spend: r.spend, income: r.income })),
+    modeKey: 'year',
+    onBar: i => location.href = '/month?month=' + monthKeys[i],
+  });
   $id('chartHint').textContent = `${year} · click a bar for the month view`;
 
   renderCategoryTable($id('catTable'), cats, { year });
@@ -92,6 +104,8 @@ async function renderYear(year) {
 (async function init() {
   CATS = await api('/api/standard-categories');
   renderChrome('year');
+  wireFlowToggle('flowSeg',
+    () => { if (_flowCfg) makeFlowChart($id('flowChart'), _flowCfg); });
   const periods = await api('/api/periods');
   if (!periods.years.length) {
     $id('emptyHint').style.display = 'block';
