@@ -211,3 +211,31 @@ def match_counts(con: duckdb.DuckDBPyConnection,
                 if p in d:
                     matches[rid] += 1
     return matches
+
+
+def net_by_rule(con: duckdb.DuckDBPyConnection,
+                rules: list[Rule]) -> dict[int, float]:
+    """Net amount per rule: signed sum of the amounts of the rows the
+    rule actually categorizes — the rows where it is the FIRST matching
+    enabled pattern in priority order (the same winner the
+    effective_transactions view picks for ``rule_category``).
+
+    A row matching several patterns is counted once, for its winning
+    rule only, so nets never double-count across rules (the adjacent
+    match counts do — they are per-pattern). Signed: expenses negative,
+    income positive. Soft-deleted rows are excluded via the
+    effective_transactions view.
+    """
+    nets: dict[int, float] = {r.id: 0.0 for r in rules}
+    if rules:
+        normed = [(r.id, normalize_match_text(r.pattern).lower()) for r in rules]
+        for desc, amount in con.execute(
+                "SELECT description, amount FROM effective_transactions").fetchall():
+            d = normalize_match_text(desc).lower()
+            if not d or amount is None:
+                continue
+            for rid, p in normed:
+                if p in d:
+                    nets[rid] += float(amount)
+                    break
+    return nets

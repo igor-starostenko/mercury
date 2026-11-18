@@ -399,11 +399,13 @@ def list_rules():
         rule_list = rules.load_rules(con, enabled_only=False)
         enabled = [r for r in rule_list if r.enabled]
         matches = rules.match_counts(con, enabled)
+        nets = rules.net_by_rule(con, enabled)
         return {
             "rules": [{"id": r.id, "pattern": r.pattern,
                        "category": r.category, "enabled": r.enabled,
                        "position": r.position,
-                       "matches": matches.get(r.id, 0)}
+                       "matches": matches.get(r.id, 0),
+                       "net": round(nets.get(r.id, 0.0), 2)}
                       for r in rule_list],
         }
     finally:
