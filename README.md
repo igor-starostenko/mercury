@@ -165,3 +165,18 @@ most likely manual edits — stay `"unknown"`.
   view and total, but the imported data stays in the database, and
   re-importing the file does not bring it back.
 - `POST /api/transactions/{id}/restore` — undo a soft delete.
+
+### Charts
+
+The cash-flow bar charts (Overview, Year, Month) default to **stacked by
+category** — spend and income each in their own stack, one segment per
+category — so per-category trends are visible across months and weeks.
+The **Totals** toggle in each chart's header switches to the grouped
+Spend vs Income bars. The choice is remembered per chart in the browser
+(localStorage); more than 8 active categories fold the smallest into a
+single "All other" segment, and grand totals appear in the tooltip footer.
+API side: `GET /api/monthly` adds `flow_by_category`
+(`[{bucket, category, spend, income}]` per month, plus income), and
+`GET /api/weekly?month=YYYY-MM&by_category=true` returns
+`{weeks, flow_by_category}` — the default response shape of the weekly
+endpoint is unchanged.

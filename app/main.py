@@ -143,13 +143,17 @@ def summary(year: str | None = None, month: str | None = None):
 
 @app.get("/api/monthly")
 def monthly(year: str | None = None):
-    """Spend/income by month, all time or one calendar year."""
+    """Spend/income by month, all time or one calendar year.
+
+    ``flow_by_category`` carries spend and income per (month, category)
+    for the stacked-by-category chart view."""
     con = get_con()
     try:
         return {
             "spend": analytics.monthly_spend(con, year),
             "income": analytics.income_by_month(con, year),
             "by_category": analytics.spend_by_category_month(con, year),
+            "flow_by_category": analytics.flow_by_category(con, year=year),
         }
     finally:
         con.close()
@@ -166,13 +170,24 @@ def year_totals():
 
 
 @app.get("/api/weekly")
-def weekly(month: str = ""):
-    """Spend/income per calendar week (Mon–Sun) within one month."""
+def weekly(month: str = "", by_category: bool = False):
+    """Spend/income per calendar week (Mon–Sun) within one month.
+
+    Default shape (list of week rows) is unchanged. With
+    ``by_category=true`` the response is ``{"weeks": [...],
+    "flow_by_category": [{bucket, category, spend, income}]}`` —
+    per (week, category) spend and income for the stacked chart view.
+    """
     if not MONTH_RE.match(month):
         raise HTTPException(status_code=400, detail="month must be YYYY-MM")
     con = get_con()
     try:
-        return analytics.weekly_breakdown(con, month)
+        weeks = analytics.weekly_breakdown(con, month)
+        if not by_category:
+            return weeks
+        return {"weeks": weeks,
+                "flow_by_category": analytics.flow_by_category(
+                    con, month=month, weekly=True)}
     finally:
         con.close()
 

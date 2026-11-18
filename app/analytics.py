@@ -69,6 +69,37 @@ def spend_by_category_month(con: duckdb.DuckDBPyConnection,
             for m, c, s in rows]
 
 
+def flow_by_category(con: duckdb.DuckDBPyConnection,
+                     year: str | None = None,
+                     month: str | None = None,
+                     weekly: bool = False) -> list[dict[str, Any]]:
+    """Spend + income per (bucket, category) for the stacked trend charts.
+
+    ``bucket`` is 'YYYY-MM' by default, or the ISO-week Monday
+    ('YYYY-MM-DD') when ``weekly=True`` — the same bucketing
+    ``weekly_breakdown`` uses. One row per (bucket, category) that has
+    activity; a bucket with no activity for a category carries no row
+    (the client zero-fills). Ignored rows are excluded, like in every
+    other aggregate.
+    """
+    bucket = ("date_trunc('week', txn_date)" if weekly
+              else "strftime(txn_date, '%Y-%m')")
+    where, params = _date_filter(year, month)
+    rows = con.execute(f"""
+        SELECT {bucket} AS bucket,
+               COALESCE(category, 'Uncategorized') AS category,
+               COALESCE(SUM(amount) FILTER (amount < 0), 0) AS spend,
+               COALESCE(SUM(amount) FILTER (amount > 0), 0) AS income
+        FROM effective_transactions
+        WHERE {NOT_IGNORED} {where}
+        GROUP BY 1, 2
+        ORDER BY 1, 2
+    """, params).fetchall()
+    return [{"bucket": str(b)[:10], "category": c,
+             "spend": round(-s, 2), "income": round(i, 2)}
+            for b, c, s, i in rows]
+
+
 def spend_by_category(con: duckdb.DuckDBPyConnection,
                       year: str | None = None,
                       month: str | None = None) -> list[dict[str, Any]]:

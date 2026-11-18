@@ -34,6 +34,10 @@
   <section class="section">
     <div class="section-head">
       <h2>Weekly cash flow</h2>
+      <div class="seg" id="flowSeg" data-key="month" role="group" aria-label="Chart view">
+        <button type="button" data-mode="category">By category</button>
+        <button type="button" data-mode="totals">Totals</button>
+      </div>
       <span class="hint" id="chartHint"></span>
     </div>
     <div class="panel"><canvas id="flowChart"></canvas></div>
@@ -61,6 +65,8 @@
 
 <script>
 let curMonth = '';
+let _flowCfg = null; // last chart config, so the view toggle re-draws
+                     // without refetching
 
 window.onDataChanged = () => renderMonth(curMonth);
 
@@ -87,12 +93,13 @@ function monthWeeks(month) {
 
 async function renderMonth(month) {
   curMonth = month;
-  const [weekly, cats, txns, sum] = await Promise.all([
-    api('/api/weekly?month=' + encodeURIComponent(month)),
+  const [weeklyRes, cats, txns, sum] = await Promise.all([
+    api('/api/weekly?month=' + encodeURIComponent(month) + '&by_category=true'),
     api('/api/categories?month=' + encodeURIComponent(month)),
     api('/api/transactions?month=' + encodeURIComponent(month) + '&limit=5000'),
     api('/api/summary?month=' + encodeURIComponent(month)),
   ]);
+  const weekly = weeklyRes.weeks;
 
   // Summary cards from the complete weekly aggregates.
   const income = weekly.reduce((a, w) => a + w.income, 0);
@@ -110,10 +117,16 @@ async function renderMonth(month) {
   // Weekly chart: merge calendar buckets with the API rows.
   const weeks = monthWeeks(month);
   const byWeek = Object.fromEntries(weekly.map(w => [w.week, w]));
-  makeFlowChart($id('flowChart'),
-    weeks.map(w => w.label),
-    weeks.map(w => (byWeek[w.week] || {}).spend || 0),
-    weeks.map(w => (byWeek[w.week] || {}).income || 0));
+  makeFlowChart($id('flowChart'), _flowCfg = {
+    labels: weeks.map(w => w.label),
+    keys: weeks.map(w => w.week),
+    spend: weeks.map(w => (byWeek[w.week] || {}).spend || 0),
+    income: weeks.map(w => (byWeek[w.week] || {}).income || 0),
+    byCategory: (weeklyRes.flow_by_category || []).map(r =>
+      ({ key: r.bucket, category: r.category,
+         spend: r.spend, income: r.income })),
+    modeKey: 'month',
+  });
   $id('chartHint').textContent = `${monthLong(month)} · Mon–Sun weeks, clipped to the month`;
 
   renderCategoryTable($id('catTable'), cats, { month });
@@ -128,6 +141,8 @@ async function renderMonth(month) {
 (async function init() {
   CATS = await api('/api/standard-categories');
   renderChrome('month');
+  wireFlowToggle('flowSeg',
+    () => { if (_flowCfg) makeFlowChart($id('flowChart'), _flowCfg); });
   const periods = await api('/api/periods');
   if (!periods.months.length) {
     $id('emptyHint').style.display = 'block';

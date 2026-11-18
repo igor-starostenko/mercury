@@ -184,40 +184,179 @@ async function runClassify() {
 }
 
 /* -------------------------------------------------------------- flow chart */
-/* Grouped bar chart: spend (red) vs income (green) per label. */
-function makeFlowChart(canvas, labels, spend, income, onBar) {
+/* Two views on every cash-flow bar chart, switchable per chart:
+ *   'category' — stacked by category (default): one segment per category,
+ *                spend and income each in their own stack, so the
+ *                per-category trend is readable across months/weeks.
+ *   'totals'   — grouped Spend vs Income bars (the original behavior).
+ * The choice is persisted in localStorage per chart (modeKey), so it
+ * survives data re-renders and page reloads.
+ */
+const FLOW_MAX_CATEGORIES = 8; // top N categories as segments; the tail
+                               // merges into one "All other" segment
+const ALL_OTHER = 'All other';
+
+function flowMode(key) {
+  try {
+    return (localStorage.getItem('mercury.flowMode.' + key) === 'totals')
+      ? 'totals' : 'category';
+  } catch (e) { return 'category'; }
+}
+
+function setFlowMode(key, mode) {
+  try { localStorage.setItem('mercury.flowMode.' + key, mode); } catch (e) {}
+}
+
+/* Wire a .seg toggle (static HTML) to a chart's mode. Called once per
+ * page; `redraw` re-draws the chart from the page's cached config. */
+function wireFlowToggle(segId, redraw) {
+  const seg = $id(segId);
+  if (!seg) return;
+  const key = seg.dataset.key;
+  const paint = () => {
+    const mode = flowMode(key);
+    seg.querySelectorAll('button').forEach(b =>
+      b.classList.toggle('active', b.dataset.mode === mode));
+  };
+  seg.querySelectorAll('button').forEach(b => {
+    b.addEventListener('click', () => {
+      if (b.dataset.mode === flowMode(key)) return;
+      setFlowMode(key, b.dataset.mode);
+      paint();
+      redraw();
+    });
+  });
+  paint();
+}
+
+/* Category color: the standard palette first, then a stable hash for
+ * custom categories (rule pickers allow free names) so stacked
+ * segments don't all land on the grey fallback. */
+function catColor(name) {
+  if (CAT_COLORS[name]) return CAT_COLORS[name];
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+  return 'hsl(' + h + ', 48%, 58%)';
+}
+
+function withAlpha(color, a) {
+  if (color[0] === '#') {
+    const n = parseInt(color.slice(1), 16);
+    return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' +
+           (n & 255) + ',' + a + ')';
+  }
+  return color; // hashed hsl fallback: no easy alpha conversion
+}
+
+/* Stacked-view plan: order categories by total volume across ALL
+ * buckets (deterministic, so the stack never reorders between buckets)
+ * and fold the tail beyond FLOW_MAX_CATEGORIES into "All other". */
+function flowStackPlan(byCategory) {
+  const agg = new Map();
+  for (const r of byCategory || []) {
+    const a = agg.get(r.category) || { spend: 0, income: 0 };
+    a.spend += r.spend || 0;
+    a.income += r.income || 0;
+    agg.set(r.category, a);
+  }
+  const all = [...agg.entries()].sort((x, y) =>
+    (y[1].spend + y[1].income) - (x[1].spend + x[1].income));
+  const keep = all.slice(0, FLOW_MAX_CATEGORIES).map(e => e[0]);
+  const merged = all.slice(FLOW_MAX_CATEGORIES).map(e => e[0]);
+  return { keep, merged };
+}
+
+/* cfg: {
+ *   labels:     display labels for the x axis,
+ *   keys:       bucket keys aligned with labels ('YYYY-MM', or the ISO
+ *               week Monday 'YYYY-MM-DD' on the month page),
+ *   spend:      zero-filled total spend per bucket (totals view + the
+ *               stacked view's tooltip footer),
+ *   income:     zero-filled total income per bucket,
+ *   byCategory: [{key, category, spend, income}] rows for the stacked
+ *               view (no row for a (bucket, category) without activity),
+ *   modeKey:    localStorage key for the view toggle,
+ *   onBar:      optional (barIndex) => void
+ * } */
+function makeFlowChart(canvas, cfg) {
   // Re-renders (onDataChanged) reuse the same canvas: destroy the old
   // chart first, or Chart.js throws "Canvas is already in use" and the
   // whole re-render aborts before the later panels update.
   const existing = Chart.getChart(canvas);
   if (existing) existing.destroy();
-  const chart = new Chart(canvas, {
-    type: 'bar',
-    data: { labels, datasets: [
-      { label: 'Spend', data: spend,
+  const options = {
+    responsive: true,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { position: 'top', align: 'end',
+        labels: { color: '#8a90a2', usePointStyle: true, boxWidth: 8, boxHeight: 8 } },
+      tooltip: { callbacks: { label: c => ' ' + c.dataset.label + ': ' + fmtMoney(c.raw) } },
+    },
+    scales: {
+      x: { ticks: { color: '#8a90a2' }, grid: { display: false } },
+      y: { beginAtZero: true,
+        ticks: { color: '#8a90a2', callback: v => fmtAxis(v) },
+        grid: { color: '#202634' } },
+    },
+  };
+  const stacked = flowMode(cfg.modeKey) === 'category' &&
+    (cfg.byCategory || []).length > 0;
+  let datasets;
+  if (!stacked) {
+    datasets = [
+      { label: 'Spend', data: cfg.spend,
         backgroundColor: 'rgba(255,107,107,.78)', hoverBackgroundColor: '#ff6b6b',
         borderRadius: 4, maxBarThickness: 38 },
-      { label: 'Income', data: income,
+      { label: 'Income', data: cfg.income,
         backgroundColor: 'rgba(56,193,114,.85)', hoverBackgroundColor: '#38c172',
         borderRadius: 4, maxBarThickness: 38 },
-    ]},
-    options: {
-      responsive: true,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: { position: 'top', align: 'end',
-          labels: { color: '#8a90a2', usePointStyle: true, boxWidth: 8, boxHeight: 8 } },
-        tooltip: { callbacks: { label: c => ' ' + c.dataset.label + ': ' + fmtMoney(c.raw) } },
-      },
-      scales: {
-        x: { ticks: { color: '#8a90a2' }, grid: { display: false } },
-        y: { beginAtZero: true,
-          ticks: { color: '#8a90a2', callback: v => fmtAxis(v) },
-          grid: { color: '#202634' } },
-      },
-    },
+    ];
+  } else {
+    // Per-dataset `stack` only groups bars; the SCALES must also be
+    // stacked or the segments render side-by-side (grouped), not piled.
+    options.scales.x.stacked = true;
+    options.scales.y.stacked = true;
+    const plan = flowStackPlan(cfg.byCategory);
+    // The merge label must never collide with a real category name —
+    // "Other" is one of the standard categories.
+    const names = [...plan.keep, ...(plan.merged.length ? [ALL_OTHER] : [])];
+    // One dataset per (category, flow) that has any activity; spend and
+    // income sit in separate stacks so each starts at zero.
+    const series = (name, side) => cfg.keys.map(k => {
+      let v = 0;
+      for (const r of cfg.byCategory) {
+        if (r.key !== k) continue;
+        if (name === ALL_OTHER ? !plan.merged.includes(r.category)
+                             : r.category !== name) continue;
+        v += r[side] || 0;
+      }
+      return Math.round(v * 100) / 100;
+    });
+    datasets = [];
+    for (const name of names) {
+      const color = name === ALL_OTHER ? '#57606f' : catColor(name);
+      for (const side of ['spend', 'income']) {
+        const data = series(name, side);
+        if (data.every(v => v === 0)) continue;
+        datasets.push({
+          label: name, data, stack: side,
+          backgroundColor: withAlpha(color, .82),
+          hoverBackgroundColor: color,
+          maxBarThickness: 60,
+        });
+      }
+    }
+    // Per-bucket grand totals in the tooltip footer.
+    options.plugins.tooltip.callbacks.footer = items =>
+      'Spend: ' + fmtMoney(cfg.spend[items[0].dataIndex]) +
+      '   ·   Income: ' + fmtMoney(cfg.income[items[0].dataIndex]);
+  }
+  const chart = new Chart(canvas, {
+    type: 'bar',
+    data: { labels: cfg.labels, datasets },
+    options,
   });
-  if (onBar) chart.options.onClick = (evt, els) => { if (els.length) onBar(els[0].index); };
+  if (cfg.onBar) chart.options.onClick = (evt, els) => { if (els.length) cfg.onBar(els[0].index); };
   return chart;
 }
 
