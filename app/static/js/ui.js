@@ -418,12 +418,20 @@ async function renderCategoryTable(container, catData, scope) {
         q.set('limit', '500');
         try {
           const txns = await api('/api/transactions?' + q.toString());
-          wrap.innerHTML =
-            '<div class="detail-head"><span>' + txns.length +
-            ' transaction' + (txns.length === 1 ? '' : 's') +
-            '</span><span>newest first</span></div>' + txnTableHTML(txns);
+          wrap._txns = txns;
+          wrap._sortState = { key: 'date', dir: 'desc' };
+          wrap._detailRender = () => {
+            const st = wrap._sortState;
+            wrap.innerHTML =
+              '<div class="detail-head"><span>' + txns.length +
+              ' transaction' + (txns.length === 1 ? '' : 's') +
+              '</span><span>' + txnSortLabel(st) + '</span></div>' +
+              txnTableHTML(sortTxns(txns, st), { sort: st });
+            wireCategorySelects(wrap);
+          };
+          wrap._detailRender();
+          wireTxnSort(wrap);
           wrap.dataset.loaded = '1';
-          wireCategorySelects(wrap);
         } catch (e) {
           wrap.innerHTML = '<p class="empty" style="padding:14px">' + esc(e.message) + '</p>';
         }
@@ -433,16 +441,53 @@ async function renderCategoryTable(container, catData, scope) {
 }
 
 /* ----------------------------------------------------------- transaction table */
-/* HTML for a transactions table. Rows: {date, source, description, category, amount, id}. */
+/* HTML for a transactions table. Rows: {date, source, description, category, amount, id}.
+ * Date/Description/Amount headers are clickable (opts.sortable, default true);
+ * opts.sort ({key, dir}) renders the active indicator. All scoped rows are
+ * already loaded, so sorting is client-side — no API round-trip per click.
+ * Per-container state lives on the element itself (_txns, _sortState). */
+const TXN_SORTS = {
+  date: {
+    def: 'desc', // newest first, the pre-existing default
+    cmp: (a, b) => a.date.localeCompare(b.date),
+    labels: { asc: 'oldest first', desc: 'newest first' },
+  },
+  description: {
+    def: 'asc',
+    cmp: (a, b) => a.description.localeCompare(b.description, undefined, { numeric: true }),
+    labels: { asc: 'A–Z', desc: 'Z–A' },
+  },
+  amount: {
+    def: 'desc', // largest first
+    cmp: (a, b) => a.amount - b.amount,
+    labels: { asc: 'smallest first', desc: 'largest first' },
+  },
+};
+function sortTxns(txns, state) {
+  const rule = TXN_SORTS[state.key] || TXN_SORTS.date;
+  const mul = state.dir === 'asc' ? 1 : -1;
+  return txns.slice().sort((a, b) => rule.cmp(a, b) * mul || a.id - b.id);
+}
+function txnSortLabel(state) {
+  return (TXN_SORTS[state.key] || TXN_SORTS.date).labels[state.dir];
+}
 function txnTableHTML(txns, opts = {}) {
   if (!txns.length) return '<p class="empty">No transactions.</p>';
   const editable = opts.editable !== false;
+  const sortable = opts.sortable !== false;
+  const st = opts.sort;
+  const th = (key, label, extra) => {
+    if (!sortable) return extra ? `<th class="${extra}">${label}</th>` : `<th>${label}</th>`;
+    const active = st && st.key === key;
+    const arrow = active ? (st.dir === 'asc' ? '▲' : '▼') : '';
+    return `<th class="${extra ? extra + ' ' : ''}sortable" data-sortkey="${key}" title="Sort by ${label.toLowerCase()} — click again to flip direction">${label}<span class="sort-ind">${arrow}</span></th>`;
+  };
   return `
     <table>
       <thead><tr>
-        <th>Date</th><th>Source</th><th>Description</th>
+        ${th('date', 'Date')}<th>Source</th>${th('description', 'Description')}
         ${editable ? '<th>Category</th>' : ''}
-        <th class="num">Amount</th>
+        ${th('amount', 'Amount', 'num')}
         ${editable ? '<th style="width:34px"></th>' : ''}
       </tr></thead>
       <tbody>${txns.map(t => `
@@ -456,6 +501,39 @@ function txnTableHTML(txns, opts = {}) {
         </tr>`).join('')}
       </tbody>
     </table>`;
+}
+
+/* Mount a transactions table into a dedicated container with working sort
+ * headers. The source rows and sort state are kept on the element, so a
+ * sort click rebuilds the table without losing either. Safe to rebuild the
+ * whole table: category <select>s commit on change, nothing is pending. */
+function mountTxnTable(container, txns, opts = {}) {
+  container._txns = txns;
+  if (!container._sortState) container._sortState = { key: 'date', dir: 'desc' };
+  container._editable = opts.editable;
+  renderTxnTable(container);
+}
+function renderTxnTable(container) {
+  container.innerHTML = txnTableHTML(
+    sortTxns(container._txns, container._sortState),
+    { sort: container._sortState, editable: container._editable });
+  wireCategorySelects(container);
+  wireTxnSort(container);
+}
+/* Click a sortable header: same column flips direction, new column starts
+ * at its natural direction (TXN_SORTS[key].def). */
+function wireTxnSort(root) {
+  root.querySelectorAll('th[data-sortkey]').forEach(th => {
+    th.addEventListener('click', () => {
+      const key = th.dataset.sortkey;
+      const cur = root._sortState;
+      root._sortState = cur.key === key
+        ? { key, dir: cur.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: TXN_SORTS[key].def };
+      if (root._detailRender) { root._detailRender(); wireTxnSort(root); }
+      else renderTxnTable(root);
+    });
+  });
 }
 
 /* Soft-delete a transaction: hidden everywhere, imported row untouched,
