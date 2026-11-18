@@ -29,14 +29,14 @@ header {
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
 }
-/* Fixed brand width — but sized to the sub-line, not the page: the tabs must
- * hug the logo (sr1us, post-PR-#21), so the old 340px basis — sized for the
- * longer "N transactions · M accounts" sub — read as a dead gap. 240px fits
- * the longest sub the pages can render ("no transactions in September 2026"
- * = 179px text + 40px mark/gap, measured) with headroom; anything longer
- * ellipsizes into the stable 240px box (full text on hover) instead of
- * shifting the header between pages. */
-.brand { display: flex; align-items: center; gap: 10px; flex: 0 1 240px; min-width: 132px; }
+/* Fixed brand width — sized to the sub-line that actually renders (sr1us:
+ * the 240px basis, sized for the unreachable "no transactions in <Month YYYY>"
+ * fallback, left ~130px of dead space before the nav). 140px = 40px mark/gap
+ * + 84px measured "165 transactions" + 16px headroom for count growth
+ * (comfortably fits ~5-digit counts); anything longer ellipsizes into the
+ * stable 140px box (full text on hover) instead of shifting the header
+ * between pages. */
+.brand { display: flex; align-items: center; gap: 10px; flex: 0 1 140px; min-width: 132px; }
 .brand .mark {
   width: 30px; height: 30px; border-radius: 8px; flex: none;
   background: linear-gradient(135deg, #4f8cff, #7b5cff);
