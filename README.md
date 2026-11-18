@@ -176,6 +176,32 @@ the header). The list defaults to date, newest first. Sorting happens in
 the browser over the already-loaded rows — no extra API calls, and the
 category dropdowns keep working after a re-sort.
 
+### Searching transactions
+
+The **Transaction categorization** list (Categories page) and the
+**All transactions** table (Month page) each have a search box. Search
+uses the exact same matching as category rules — case-insensitive
+partial substring on whitespace-normalized description text — so the
+rows shown for a phrase are precisely the rows a rule with that
+pattern would catch: type a candidate pattern to dry-run it before
+saving it. Search is a client-side filter over the rows already loaded
+(no extra API calls) and composes with the All / You / LLM / Rule /
+Unknown chips (both must match).
+
+While a search is active, the matched text is highlighted in each
+description and the header hint shows how many rows are visible.
+Every row in both lists also carries a **rule verdict** in its
+category cell: which enabled rule the description matches (the first
+in priority order — the one that would classify it), whether that
+rule is the effective category source or overridden by a manual / LLM
+assignment, and how many lower-priority rules it shadows. The Month
+table additionally shows a small `you` / `LLM` / `rule` provenance
+badge next to each category dropdown, using the same vocabulary as
+the "Set by" column. The API rows behind both lists carry `rule_match`
+(`{pattern, category, position}` or `null`), `rule_matches` (count of
+enabled rules matching) and `set_by` (effective source: `manual` /
+`llm` / `rule` / `csv` / `none`).
+
 ### Charts
 
 The cash-flow bar charts (Overview, Year, Month) default to **stacked by

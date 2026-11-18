@@ -68,8 +68,12 @@ def ensure_rule_position(con: duckdb.DuckDBPyConnection) -> None:
 
 def load_rules(con: duckdb.DuckDBPyConnection,
                enabled_only: bool = True) -> list[Rule]:
-    """Rules in evaluation order (user drag order, first match wins)."""
-    ensure_table(con)
+    """All rules in priority order. ``enabled_only`` skips disabled ones."""
+    try:
+        ensure_table(con)
+    except duckdb.InvalidInputException:
+        pass  # read-only connection — the table either exists or the
+        # SELECT below raises anyway
     ensure_rule_position(con)
     sql = ("SELECT id, pattern, category, enabled, position "
            "FROM category_rules")
@@ -93,15 +97,21 @@ def normalize_match_text(value: Optional[str]) -> str:
     return re.sub(r"\s+", " ", (value or "")).strip()
 
 
-def match_category(description: str, rules: list[Rule]) -> Optional[str]:
-    """Category from the first matching rule, or None."""
+def matching_rules(description: str, rules: list[Rule]) -> list[Rule]:
+    """Every rule whose pattern matches the description, in evaluation
+    order — the first entry is the winner (the rule the
+    effective_transactions view applies); the rest are shadowed by it."""
     d = normalize_match_text(description).lower()
     if not d:
-        return None
-    for r in rules:
-        if normalize_match_text(r.pattern).lower() in d:
-            return r.category
-    return None
+        return []
+    return [r for r in rules
+            if normalize_match_text(r.pattern).lower() in d]
+
+
+def match_category(description: str, rules: list[Rule]) -> Optional[str]:
+    """Category from the first matching rule, or None."""
+    matched = matching_rules(description, rules)
+    return matched[0].category if matched else None
 
 
 def validate(pattern: str, category: str) -> tuple[str, str]:

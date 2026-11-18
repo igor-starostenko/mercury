@@ -55,7 +55,10 @@
     <div class="section-head">
       <h2>All transactions</h2>
       <span class="badge" id="txnCount"></span>
-      <span class="hint">click a column to sort</span>
+      <span class="hint" id="txnHint">click a column to sort</span>
+      <input type="search" class="txn-search" id="txnSearch"
+             placeholder="Search description… (rule-match preview)"
+             aria-label="Search transactions by description">
     </div>
     <div class="panel tight" id="txnTable"></div>
   </section>
@@ -69,6 +72,25 @@ let _flowCfg = null; // last chart config, so the view toggle re-draws
                      // without refetching
 
 window.onDataChanged = () => renderMonth(curMonth);
+
+/* Description search on the "All transactions" table. Matching is the
+ * category-rule semantics (case-insensitive partial substring on
+ * whitespace-normalized text), so the visible rows are exactly the rows
+ * a rule with the typed pattern would catch. */
+function updateTxnHint() {
+  const table = $id('txnTable');
+  const q = ($id('txnSearch').value || '').trim();
+  $id('txnHint').textContent = q
+    ? `showing ${table._lastShown ?? 0} of ${table._lastTotal ?? 0} for “${q}” · click a column to sort`
+    : 'click a column to sort';
+}
+
+$id('txnSearch').addEventListener('input', () => {
+  const table = $id('txnTable');
+  table._search = $id('txnSearch').value;
+  renderTxnTable(table);
+  updateTxnHint();
+});
 
 /* Calendar weeks (Mon–Sun) overlapping the month, clipped to it.
  * Returns [{week: 'YYYY-MM-DD' (Monday), label: 'Sep 1–7', ...}]. */
@@ -133,6 +155,7 @@ async function renderMonth(month) {
 
   $id('txnCount').textContent = txns.length + ' transactions';
   mountTxnTable($id('txnTable'), txns);
+  updateTxnHint();
   setRangeSub(totalsSub(sum, 'no transactions in ' + monthLong(month)));
   setPageRange(sum.first_date, sum.last_date);
 }
