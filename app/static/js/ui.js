@@ -484,6 +484,7 @@ function txnTableHTML(txns, opts = {}) {
   const editable = opts.editable !== false;
   const sortable = opts.sortable !== false;
   const st = opts.sort;
+  const qre = opts.search ? txnSearchRegex(opts.search) : null;
   const th = (key, label, extra) => txnSortTh(key, label, extra, st, sortable);
   return `
     <table>
@@ -497,8 +498,8 @@ function txnTableHTML(txns, opts = {}) {
         <tr class="${t.ignored ? 'txn-ignored' : ''}">
           <td>${esc(t.date)}</td>
           <td>${esc(t.source)}</td>
-          <td class="desc" title="${esc(t.description)}">${esc(t.description)}</td>
-          ${editable ? `<td><select class="cat-select" data-id="${t.id}">${catOptions(t.category)}</select>${t.ignored ? '<span class="ignored-tag">ignored — not counted in totals</span>' : ''}</td>` : ''}
+          <td class="desc" title="${esc(t.description)}">${highlightDesc(t.description, qre)}</td>
+          ${editable ? `<td><select class="cat-select" data-id="${t.id}">${catOptions(t.category)}</select>${t.ignored ? '<span class="ignored-tag">ignored — not counted in totals</span>' : ''}${setByBadge(t)}${ruleNoteHTML(t)}</td>` : ''}
           <td class="num ${t.amount < 0 ? 'neg' : 'pos'}">${fmtMoney(t.amount)}</td>
           ${editable ? `<td class="num"><button class="txn-del" data-id="${t.id}" title="Delete (soft — restorable)" onclick="deleteTxn(${t.id}, this)">×</button></td>` : ''}
         </tr>`).join('')}
@@ -517,9 +518,19 @@ function mountTxnTable(container, txns, opts = {}) {
   renderTxnTable(container);
 }
 function renderTxnTable(container) {
-  container.innerHTML = txnTableHTML(
-    sortTxns(container._txns, container._sortState),
-    { sort: container._sortState, editable: container._editable });
+  const all = container._txns || [];
+  const rows = sortTxns(all.filter(t => txnSearchMatch(t, container._search || '')),
+                        container._sortState);
+  container._lastShown = rows.length;
+  container._lastTotal = all.length;
+  const q = (container._search || '').trim();
+  container.innerHTML = rows.length
+    ? txnTableHTML(rows, { sort: container._sortState,
+                           editable: container._editable,
+                           search: container._search || '' })
+    : (q
+        ? `<p class="empty">No matches for “${esc(q)}” — ${all.length} transaction${all.length === 1 ? '' : 's'} in this period hidden by the search.</p>`
+        : '<p class="empty">No transactions.</p>');
   wireCategorySelects(container);
   wireTxnSort(container);
 }
@@ -541,6 +552,81 @@ function wireTxnSort(root) {
       else renderTxnTable(root);
     });
   });
+}
+
+/* --------------------------------- transaction search */
+/* Search uses exactly the same matching as category rules (app/rules.py):
+ * case-insensitive partial substring on the whitespace-normalized
+ * description. The rows shown for a query are therefore precisely the
+ * rows a rule with that pattern would catch — a dry run of a proposed
+ * rule before it is saved. Matching runs on the normalized text;
+ * highlighting re-derives the same match on the raw text (whitespace
+ * runs as \s+), so <mark> lines up with what is shown. */
+function txnSearchNormalize(text) {
+  return String(text == null ? '' : text).replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function txnSearchRegex(q) {
+  const norm = txnSearchNormalize(q);
+  if (!norm) return null;
+  const src = norm.split(' ')
+    .map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('\\s+');
+  return new RegExp(src, 'gi');
+}
+
+function txnSearchMatch(row, q) {
+  const nq = txnSearchNormalize(q);
+  return !nq || txnSearchNormalize(row.description).includes(nq);
+}
+
+function highlightDesc(text, re) {
+  const raw = text == null ? '' : String(text);
+  if (!re) return esc(raw);
+  re.lastIndex = 0;
+  let out = '', last = 0, m;
+  while ((m = re.exec(raw))) {
+    out += esc(raw.slice(last, m.index)) + '<mark>' + esc(m[0]) + '</mark>';
+    last = m.index + m[0].length;
+    if (!m[0].length) re.lastIndex++;
+  }
+  return out + esc(raw.slice(last));
+}
+
+/* Per-row rule verdict, from the rule_match/rule_matches/set_by fields
+ * the API computes with the same code as the effective_transactions
+ * view: which enabled rule this description matches (first in priority
+ * order = the one that would classify it), whether that rule is the
+ * effective source, and how many lower-priority rules it shadows. */
+function ruleNoteHTML(t) {
+  if (!t || !t.rule_match) return '';
+  const m = t.rule_match;
+  const active = t.set_by === 'rule';
+  const shadowed = Math.max(0, (t.rule_matches || 1) - 1);
+  const who = t.set_by === 'manual' ? 'you' : t.set_by;
+  const title = active
+    ? `Category comes from rule “${m.pattern}” (first match in priority order wins).`
+      + (shadowed
+         ? ` ${shadowed} lower-priority rule${shadowed > 1 ? 's' : ''} also match${shadowed > 1 ? '' : 'es'} this description.`
+         : '')
+    : `Matches rule “${m.pattern}” → ${m.category}, but the ${who} category wins (precedence: you > rule > LLM > CSV).`;
+  const extra = active
+    ? (shadowed ? ` · +${shadowed} shadowed` : '')
+    : ` · overridden (${who} wins)`;
+  return `<span class="rule-note${active ? ' rule-note-active' : ''}" title="${esc(title)}">${esc(`rule “${m.pattern}” → ${m.category}`)}${extra}</span>`;
+}
+
+/* Small provenance badge for the "All transactions" table — same
+ * vocabulary as the "Set by" column of the categorization list. */
+function setByBadge(t) {
+  const map = { manual: 'you', llm: 'LLM', rule: 'rule' };
+  if (!t || !map[t.set_by]) return '';
+  const titles = {
+    manual: 'Category set by you (manual override)',
+    llm: 'Category set by the LLM auto-classify',
+    rule: 'Category set by a custom rule (applied at read time)',
+  };
+  return `<span class="badge src-${esc(t.set_by)} setby-inline" title="${esc(titles[t.set_by])}">${map[t.set_by]}</span>`;
 }
 
 /* Soft-delete a transaction: hidden everywhere, imported row untouched,

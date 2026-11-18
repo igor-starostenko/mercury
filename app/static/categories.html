@@ -57,6 +57,9 @@
         <button class="ov-chip" data-by="llm">LLM</button>
         <button class="ov-chip" data-by="rule">Rule</button>
         <button class="ov-chip" data-by="uncategorized">Unknown</button>
+        <input type="search" class="txn-search" id="ovSearch"
+               placeholder="Search description… (rule-match preview)"
+               aria-label="Search categorized transactions by description">
       </div>
       <div id="overrides"></div>
     </div>
@@ -72,6 +75,7 @@ const OV_LIMIT = 1000;
 const OV_BASE_HINT = 'missing CSV category or re-categorized · re-pick a category to make it yours';
 let ovCache = [];
 let ovFilter = 'all';
+let ovSearch = '';
 
 function ovMatches(r) {
   if (ovFilter === 'all') return true;
@@ -86,24 +90,30 @@ function renderOverrides() {
   const el = $id('overrides');
   if (!el._sortState) el._sortState = { key: 'date', dir: 'desc' };
   const st = el._sortState;
-  const rows = sortTxns(ovCache.filter(ovMatches), st);
+  const rows = sortTxns(ovCache.filter(ovMatches)
+    .filter(t => txnSearchMatch(t, ovSearch)), st);
+  const q = (ovSearch || '').trim();
+  const qre = q ? txnSearchRegex(q) : null;
   const pending = ovCache.filter(r => r.set_by === 'uncategorized' || r.set_by === 'unknown').length;
   const noLlm = !window.LLM_CONFIGURED;
   $id('unknownCount').textContent = pending ? pending + ' need a category' : 'all categorized';
   $id('classifyBtn').disabled = !pending || noLlm;
   $id('classifyBtn').title = noLlm
     ? 'LLM not configured — set MERCURY_LLM_ENDPOINT and restart the server' : '';
-  $id('ovHint').textContent = rows.length + ' shown'
+  $id('ovHint').textContent = (q ? `for “${q}” · ` : '') + rows.length + ' shown'
     + (ovCache.length >= OV_LIMIT ? ' (first ' + OV_LIMIT + ')' : '')
-    + (ovFilter === 'all' ? ' · ' + OV_BASE_HINT : '')
+    + (ovFilter === 'all' && !q ? ' · ' + OV_BASE_HINT : '')
     + ((st.key !== 'date' || st.dir !== 'desc') ? ' · ' + txnSortLabel(st) : '')
     + (noLlm && pending ? ' · LLM not configured, Classify is disabled' : '');
   if (!rows.length) {
     $id('overrides').innerHTML = '<p class="empty">'
-      + (ovCache.length
-        ? (ovFilter === 'uncategorized' ? 'All transactions categorized. 🎉'
-                                        : 'No ' + (OV_SET_BY[ovFilter] || ovFilter) + ' transactions.')
-        : 'No categorized or pending transactions yet.</p>');
+      + (q
+        ? `No matches for “${esc(q)}”. ${ovCache.length} transaction${ovCache.length === 1 ? '' : 's'} in this list${ovFilter !== 'all' ? ' (filter: ' + (OV_SET_BY[ovFilter] || ovFilter) + ')' : ''}.`
+        : (ovCache.length
+          ? (ovFilter === 'uncategorized' ? 'All transactions categorized. 🎉'
+                                          : 'No ' + (OV_SET_BY[ovFilter] || ovFilter) + ' transactions.')
+          : 'No categorized or pending transactions yet.'))
+      + '</p>';
     return;
   }
   $id('overrides').innerHTML = `
@@ -113,13 +123,13 @@ function renderOverrides() {
         <th>Category</th><th>Set by</th>${txnSortTh('amount', 'Amount', 'num', st)}
       </tr></thead>
       <tbody>${rows.map(t => `
-        <tr>
+        <tr${t.ignored ? ' class="row-ignored"' : ''}>
           <td>${esc(t.date)}</td>
           <td>${esc(t.source)}</td>
-          <td class="desc" title="${esc(t.description)}">${esc(t.description)}</td>
+          <td class="desc" title="${esc(t.description)}">${highlightDesc(t.description, qre)}</td>
           <td><select class="cat-select" data-id="${t.id}">${catOptions(t.category)}</select>${
             t.original_category && t.original_category !== 'Uncategorized' && t.original_category !== t.category
-              ? `<span class="was-cat">was: ${esc(t.original_category)}</span>` : ''}</td>
+              ? `<span class="was-cat">was: ${esc(t.original_category)}</span>` : ''}${ruleNoteHTML(t)}</td>
           <td><span class="badge src-${esc(t.set_by)}">${esc(OV_SET_BY[t.set_by] || t.set_by)}</span></td>
           <td class="num ${t.amount < 0 ? 'neg' : 'pos'}">${fmtMoney(t.amount)}</td>
         </tr>`).join('')}
@@ -136,6 +146,13 @@ $id('ovFilters').addEventListener('click', e => {
   ovFilter = btn.dataset.by;
   $id('ovFilters').querySelectorAll('.ov-chip').forEach(b =>
     b.classList.toggle('active', b === btn));
+  renderOverrides();
+});
+/* Description search — same matching as category rules (see txnSearch*
+ * in js/ui.js): the rows shown are exactly the rows a rule with the
+ * typed pattern would catch, so a pattern can be tested before saving. */
+$id('ovSearch').addEventListener('input', () => {
+  ovSearch = $id('ovSearch').value;
   renderOverrides();
 });
 

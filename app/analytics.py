@@ -11,6 +11,8 @@ from __future__ import annotations
 import duckdb
 from typing import Any
 
+from . import rules
+
 # Amount sign convention: negative = money out (spend), positive = money in.
 
 # Row-level "ignore": a transaction whose effective category is the
@@ -317,16 +319,30 @@ def override_rows(con: duckdb.DuckDBPyConnection,
         ORDER BY v.txn_date DESC, v.id DESC
         LIMIT ?
     """, [int(include_uncategorized), limit]).fetchall()
-    return [
-        {"id": r[0], "source": r[1], "account": r[2], "date": r[3],
-         "amount": r[4], "description": r[5],
-         "category": _display_category(r[6]),
-         "original_category": r[7],
-         "set_by": ("uncategorized" if r[8] is None and r[9]
-                    else (r[8] or "unknown")),
-         "ignored": bool(r[10])}
-        for r in rows
-    ]
+    enabled = rules.load_rules(con)
+    out = []
+    for r in rows:
+        # Rule dry-run verdicts: which enabled rule this description
+        # matches (first in priority order = the one the view applies)
+        # and how many more would be shadowed by it. Same matching as
+        # the effective_transactions SQL, so the UI can show, test and
+        # verify rules before/without applying anything.
+        matched = rules.matching_rules(r[5], enabled)
+        out.append({
+            "id": r[0], "source": r[1], "account": r[2], "date": r[3],
+            "amount": r[4], "description": r[5],
+            "category": _display_category(r[6]),
+            "original_category": r[7],
+            "set_by": ("uncategorized" if r[8] is None and r[9]
+                       else (r[8] or "unknown")),
+            "ignored": bool(r[10]),
+            "rule_match": ({"pattern": matched[0].pattern,
+                            "category": matched[0].category,
+                            "position": matched[0].position}
+                           if matched else None),
+            "rule_matches": len(matched),
+        })
+    return out
 
 
 def soft_delete(con: duckdb.DuckDBPyConnection, txn_id: int) -> bool:
@@ -389,6 +405,7 @@ def transactions(con: duckdb.DuckDBPyConnection,
     rows = con.execute(f"""
         SELECT v.id, v.source, v.account, CAST(v.txn_date AS VARCHAR),
                v.amount, v.description, v.category, t.category,
+               v.override_source,
                (COALESCE(v.category, '') = 'Ignored') AS ignored
         FROM effective_transactions AS v
         JOIN transactions AS t ON t.id = v.id
@@ -396,14 +413,36 @@ def transactions(con: duckdb.DuckDBPyConnection,
         ORDER BY v.txn_date DESC, v.id DESC
         LIMIT ?
     """, [*params, limit]).fetchall()
-    return [
-        {"id": r[0], "source": r[1], "account": r[2], "date": r[3],
-         "amount": r[4], "description": r[5],
-         "category": _display_category(r[6]),
-         "original_category": r[7],
-         "ignored": bool(r[8])}
-        for r in rows
-    ]
+    enabled = rules.load_rules(con)
+    out = []
+    for r in rows:
+        matched = rules.matching_rules(r[5], enabled)
+        # Effective category source for this row: override_source is
+        # already the view's resolution (manual > rule > llm); fall back
+        # to the CSV value when nothing else claims the row.
+        if r[8]:
+            set_by = r[8]
+        elif matched:
+            set_by = "rule"
+        elif r[7] is not None and str(r[7]).strip() not in ("", "Uncategorized"):
+            set_by = "csv"
+        else:
+            set_by = "none"
+        out.append({
+            "id": r[0], "source": r[1], "account": r[2], "date": r[3],
+            "amount": r[4], "description": r[5],
+            "category": _display_category(r[6]),
+            "original_category": r[7],
+            "ignored": bool(r[9]),
+            "set_by": set_by,
+            # Rule dry-run verdicts, same matching as the SQL view.
+            "rule_match": ({"pattern": matched[0].pattern,
+                            "category": matched[0].category,
+                            "position": matched[0].position}
+                           if matched else None),
+            "rule_matches": len(matched),
+        })
+    return out
 
 
 def _date_filter(year: str | None, month: str | None) -> tuple[str, list]:
