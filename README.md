@@ -98,9 +98,11 @@ legacy `rule` override from before rules became read-time) > first
 matching rule > LLM assignment > CSV import. Re-picking a category on
 a rule-classified row marks it as yours and pins it against the rule.
 
-The rule's category can be the reserved value `"Ignored"` — it also
-appears in every category dropdown, so a single transaction can be
-ignored by hand. Ignored rows are excluded from every total (spend,
+The rule's category can be the reserved value `"Ignored"` — the UI
+gives it its own **Ignore transactions** box (home + Categories pages):
+a keyword plus "Ignore matches", no category dropdown needed. A single
+transaction can also be ignored by hand via its category dropdown.
+Ignored rows are excluded from every total (spend,
 income, net, account summaries, period lists) but stay visible in the
 transaction lists, dimmed and marked "ignored" — the intended tool for
 transfers between accounts and any other row that isn't real spend or

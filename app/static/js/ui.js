@@ -350,20 +350,21 @@ function wireCategorySelects(root) {
 }
 
 /* ------------------------------------------------------------- custom rules */
-/* Keyword-in-description -> category, applied at read time. Data: {rules}. */
+/* Keyword-in-description -> category, applied at read time. Data: {rules}.
+   Rules targeting the reserved "Ignored" category live in their own box
+   (renderIgnoreRules) — easier to find than a dropdown option. */
 function renderRules(data) {
   const el = $id('rulesPanel');
   if (!el) return;
-  const list = data.rules.length
+  const rules = data.rules.filter(r => r.category !== 'Ignored');
+  const list = rules.length
     ? '<table><thead><tr>' +
       '<th>Keyword</th><th>→ Category</th><th class="num">Matches</th><th style="width:40px"></th>' +
       '</tr></thead><tbody>' +
-      data.rules.map(r => `
-        <tr class="${r.category === 'Ignored' ? 'rule-ignored' : ''}">
+      rules.map(r => `
+        <tr>
           <td class="desc" title="${esc(r.pattern)}">${esc(r.pattern)}</td>
-          <td>${r.category === 'Ignored'
-            ? '<span class="badge badge-ignored" title="Matching rows are excluded from all totals but stay visible">⊘ Ignored</span>'
-            : `<span class="dot" style="background:${CAT_COLORS[r.category] || '#57606f'}"></span>${esc(r.category)}`}</td>
+          <td><span class="dot" style="background:${CAT_COLORS[r.category] || '#57606f'}"></span>${esc(r.category)}</td>
           <td class="num">${r.matches}</td>
           <td class="num"><button class="rule-del" title="Delete rule" onclick="deleteRule(${r.id})">×</button></td>
         </tr>`).join('') +
@@ -372,13 +373,59 @@ function renderRules(data) {
   el.innerHTML = `
     <form class="rule-form" onsubmit="addRule(event)">
       <input id="rulePattern" type="text" maxlength="200" required
-             placeholder="Keyword, e.g. 'walmart' or 'internal transfer'">
+             placeholder="Keyword, e.g. 'walmart'">
       <select id="ruleCategory" required>
-        ${CATS.map(c => `<option>${esc(c)}</option>`).join('')}
+        ${CATS.filter(c => c !== 'Ignored').map(c => `<option>${esc(c)}</option>`).join('')}
       </select>
       <button type="submit">Add rule</button>
     </form>
     ${list}`;
+}
+
+/* Dedicated "Ignore transactions" box: pattern rules whose matches are
+   excluded from every total (reserved category "Ignored"). Rows stay
+   visible in lists, dimmed and tagged. */
+function renderIgnoreRules(data) {
+  const el = $id('ignoreRulesPanel');
+  if (!el) return;
+  const rules = data.rules.filter(r => r.category === 'Ignored');
+  const list = rules.length
+    ? '<table><thead><tr>' +
+      '<th>Keyword</th><th>Effect</th><th class="num">Matches</th><th style="width:40px"></th>' +
+      '</tr></thead><tbody>' +
+      rules.map(r => `
+        <tr>
+          <td class="desc" title="${esc(r.pattern)}">${esc(r.pattern)}</td>
+          <td><span class="badge badge-ignored" title="Matching rows are excluded from all totals but stay visible">⊘ Ignored</span></td>
+          <td class="num">${r.matches}</td>
+          <td class="num"><button class="rule-del" title="Delete rule" onclick="deleteRule(${r.id})">×</button></td>
+        </tr>`).join('') +
+      '</tbody></table>'
+    : '<p class="empty" style="padding:14px">No ignore rules yet — add one above.</p>';
+  el.innerHTML = `
+    <form class="rule-form" onsubmit="addIgnoreRule(event)">
+      <input id="ignorePattern" type="text" maxlength="200" required
+             placeholder="Keyword, e.g. 'internal transfer' or 'to savings'">
+      <button type="submit">Ignore matches</button>
+    </form>
+    ${list}`;
+}
+
+async function addIgnoreRule(e) {
+  e.preventDefault();
+  const pattern = $id('ignorePattern').value.trim();
+  try {
+    await api('/api/rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pattern, category: 'Ignored' }),
+    });
+    $id('ignorePattern').value = '';
+    toast('Ignore rule added');
+    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  } catch (err) {
+    toast('Could not add ignore rule: ' + err.message, 5000);
+  }
 }
 
 async function addRule(e) {
