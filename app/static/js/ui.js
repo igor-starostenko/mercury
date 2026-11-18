@@ -471,17 +471,20 @@ function sortTxns(txns, state) {
 function txnSortLabel(state) {
   return (TXN_SORTS[state.key] || TXN_SORTS.date).labels[state.dir];
 }
+/* Sortable <th> shared by every transaction table (main lists, drill-downs,
+ * Categories page). st {key, dir} renders the active arrow indicator. */
+function txnSortTh(key, label, extra, st, sortable) {
+  if (sortable === false) return extra ? `<th class="${extra}">${label}</th>` : `<th>${label}</th>`;
+  const active = st && st.key === key;
+  const arrow = active ? (st.dir === 'asc' ? '▲' : '▼') : '';
+  return `<th class="${extra ? extra + ' ' : ''}sortable" data-sortkey="${key}" title="Sort by ${label.toLowerCase()} — click again to flip direction">${label}<span class="sort-ind">${arrow}</span></th>`;
+}
 function txnTableHTML(txns, opts = {}) {
   if (!txns.length) return '<p class="empty">No transactions.</p>';
   const editable = opts.editable !== false;
   const sortable = opts.sortable !== false;
   const st = opts.sort;
-  const th = (key, label, extra) => {
-    if (!sortable) return extra ? `<th class="${extra}">${label}</th>` : `<th>${label}</th>`;
-    const active = st && st.key === key;
-    const arrow = active ? (st.dir === 'asc' ? '▲' : '▼') : '';
-    return `<th class="${extra ? extra + ' ' : ''}sortable" data-sortkey="${key}" title="Sort by ${label.toLowerCase()} — click again to flip direction">${label}<span class="sort-ind">${arrow}</span></th>`;
-  };
+  const th = (key, label, extra) => txnSortTh(key, label, extra, st, sortable);
   return `
     <table>
       <thead><tr>
@@ -521,9 +524,13 @@ function renderTxnTable(container) {
   wireTxnSort(container);
 }
 /* Click a sortable header: same column flips direction, new column starts
- * at its natural direction (TXN_SORTS[key].def). */
+ * at its natural direction (TXN_SORTS[key].def). Idempotent per <th> node
+ * (renders may wire the same fresh header twice — e.g. a _detailRender
+ * that wires, plus the click handler's re-wire — which would flip twice). */
 function wireTxnSort(root) {
   root.querySelectorAll('th[data-sortkey]').forEach(th => {
+    if (th._sortWired) return;
+    th._sortWired = true;
     th.addEventListener('click', () => {
       const key = th.dataset.sortkey;
       const cur = root._sortState;

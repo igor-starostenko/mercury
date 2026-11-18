@@ -83,7 +83,10 @@ function ovMatches(r) {
 }
 
 function renderOverrides() {
-  const rows = ovCache.filter(ovMatches);
+  const el = $id('overrides');
+  if (!el._sortState) el._sortState = { key: 'date', dir: 'desc' };
+  const st = el._sortState;
+  const rows = sortTxns(ovCache.filter(ovMatches), st);
   const pending = ovCache.filter(r => r.set_by === 'uncategorized' || r.set_by === 'unknown').length;
   const noLlm = !window.LLM_CONFIGURED;
   $id('unknownCount').textContent = pending ? pending + ' need a category' : 'all categorized';
@@ -93,6 +96,7 @@ function renderOverrides() {
   $id('ovHint').textContent = rows.length + ' shown'
     + (ovCache.length >= OV_LIMIT ? ' (first ' + OV_LIMIT + ')' : '')
     + (ovFilter === 'all' ? ' · ' + OV_BASE_HINT : '')
+    + ((st.key !== 'date' || st.dir !== 'desc') ? ' · ' + txnSortLabel(st) : '')
     + (noLlm && pending ? ' · LLM not configured, Classify is disabled' : '');
   if (!rows.length) {
     $id('overrides').innerHTML = '<p class="empty">'
@@ -105,8 +109,8 @@ function renderOverrides() {
   $id('overrides').innerHTML = `
     <table>
       <thead><tr>
-        <th>Date</th><th>Source</th><th>Description</th>
-        <th>Category</th><th>Set by</th><th class="num">Amount</th>
+        ${txnSortTh('date', 'Date', null, st)}<th>Source</th>${txnSortTh('description', 'Description', null, st)}
+        <th>Category</th><th>Set by</th>${txnSortTh('amount', 'Amount', 'num', st)}
       </tr></thead>
       <tbody>${rows.map(t => `
         <tr>
@@ -121,7 +125,9 @@ function renderOverrides() {
         </tr>`).join('')}
       </tbody>
     </table>`;
-  wireCategorySelects($id('overrides'));
+  wireCategorySelects(el);
+  el._detailRender = () => renderOverrides();
+  wireTxnSort(el);
 }
 
 $id('ovFilters').addEventListener('click', e => {
