@@ -3,7 +3,9 @@
 Rules are a pure read-time layer: a rule matches when its pattern occurs
 (case-insensitive substring) in a transaction's description, and the
 effective_transactions view (ingest.py) applies the FIRST matching
-enabled rule (id order) whenever it computes an effective category.
+enabled rule in ``position`` order (the user rearranges rows by
+dragging them in the UI; ties fall back to id) whenever it computes an
+effective category.
 Rules write nothing per-row: saving, editing or deleting a rule
 instantly reshapes every report, and the original import is never
 touched.
@@ -25,7 +27,8 @@ CREATE_RULES_SQL = """
         id       INTEGER PRIMARY KEY,
         pattern  VARCHAR,
         category VARCHAR,
-        enabled  BOOLEAN DEFAULT true
+        enabled  BOOLEAN DEFAULT true,
+        position INTEGER DEFAULT 0
     )
 """
 
@@ -39,22 +42,40 @@ class Rule:
     pattern: str
     category: str
     enabled: bool = True
+    position: int = 0
 
 
 def ensure_table(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(CREATE_RULES_SQL)
 
 
+def ensure_rule_position(con: duckdb.DuckDBPyConnection) -> None:
+    """One-time migration: add the position column and backfill it.
+
+    position is the user-controlled priority (drag order in the UI).
+    Old databases are ordered purely by id, so position := id keeps
+    every existing effective category exactly as it was.
+    """
+    cols = {r[1] for r in con.execute(
+        "PRAGMA table_info('category_rules')").fetchall()}
+    if "position" not in cols:
+        con.execute(
+            "ALTER TABLE category_rules ADD COLUMN position INTEGER")
+        con.execute("UPDATE category_rules SET position = id")
+
+
 def load_rules(con: duckdb.DuckDBPyConnection,
                enabled_only: bool = True) -> list[Rule]:
-    """Rules in evaluation order (id = creation order, first match wins)."""
+    """Rules in evaluation order (user drag order, first match wins)."""
     ensure_table(con)
-    sql = "SELECT id, pattern, category, enabled FROM category_rules"
+    ensure_rule_position(con)
+    sql = ("SELECT id, pattern, category, enabled, position "
+           "FROM category_rules")
     if enabled_only:
         sql += " WHERE enabled"
-    sql += " ORDER BY id"
-    return [Rule(i, p, c, bool(e))
-            for i, p, c, e in con.execute(sql).fetchall()]
+    sql += " ORDER BY position, id"
+    return [Rule(i, p, c, bool(e), pos)
+            for i, p, c, e, pos in con.execute(sql).fetchall()]
 
 
 def match_category(description: str, rules: list[Rule]) -> Optional[str]:
@@ -95,9 +116,15 @@ def create_rule(con: duckdb.DuckDBPyConnection, pattern: str,
                 f"a rule with pattern '{r.pattern}' already exists (id {r.id})")
     new_id = con.execute(
         "SELECT COALESCE(MAX(id), 0) + 1 FROM category_rules").fetchone()[0]
-    con.execute("INSERT INTO category_rules VALUES (?,?,?,true)",
-                [new_id, pattern, category])
-    return Rule(new_id, pattern, category, True)
+    # New rules append to the end of the priority list (lowest
+    # precedence); the user can drag one up where it belongs.
+    new_pos = con.execute(
+        "SELECT COALESCE(MAX(position), 0) + 1 FROM category_rules"
+    ).fetchone()[0]
+    con.execute(
+        "INSERT INTO category_rules (id, pattern, category, enabled, position) "
+        "VALUES (?,?,?,true,?)", [new_id, pattern, category, new_pos])
+    return Rule(new_id, pattern, category, True, new_pos)
 
 
 def delete_rule(con: duckdb.DuckDBPyConnection, rule_id: int) -> bool:
@@ -106,6 +133,34 @@ def delete_rule(con: duckdb.DuckDBPyConnection, rule_id: int) -> bool:
     cur = con.execute(
         "DELETE FROM category_rules WHERE id = ?", [rule_id])
     return (cur.rowcount or 0) > 0
+
+
+def reorder_rules(con: duckdb.DuckDBPyConnection,
+                  ordered_ids: list[int]) -> list[Rule]:
+    """Persist a new priority order (drag-and-drop from the UI).
+
+    ``ordered_ids`` must list every rule id exactly once, highest
+    priority first; positions are rewritten densely (0..n-1).
+    ValueError (-> 400) on duplicates, unknown ids, or a missing rule
+    (stale client state — refresh and re-drag).
+    """
+    ensure_table(con)
+    ensure_rule_position(con)
+    existing = [row[0] for row in
+                con.execute("SELECT id FROM category_rules").fetchall()]
+    if len(set(ordered_ids)) != len(ordered_ids):
+        raise ValueError("each rule may appear only once in the new order")
+    if set(ordered_ids) != set(existing):
+        missing = sorted(set(existing) - set(ordered_ids))
+        unknown = sorted(set(ordered_ids) - set(existing))
+        if missing:
+            raise ValueError(
+                f"order is missing rule id(s): {missing} — refresh and retry")
+        raise ValueError(f"unknown rule id(s): {unknown} — refresh and retry")
+    for pos, rid in enumerate(ordered_ids):
+        con.execute("UPDATE category_rules SET position = ? WHERE id = ?",
+                    [pos, rid])
+    return load_rules(con, enabled_only=False)
 
 
 def match_counts(con: duckdb.DuckDBPyConnection,

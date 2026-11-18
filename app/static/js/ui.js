@@ -352,17 +352,117 @@ function wireCategorySelects(root) {
 /* ------------------------------------------------------------- custom rules */
 /* Keyword-in-description -> category, applied at read time. Data: {rules}.
    Rules targeting the reserved "Ignored" category live in their own box
-   (renderIgnoreRules) — easier to find than a dropdown option. */
+   (renderIgnoreRules) — easier to find than a dropdown option.
+   Both panels share ONE global priority order (the server evaluates
+   rules across both lists, first match wins), so rows are draggable
+   anywhere — including across the two panels — and the resulting
+   global order is persisted via POST /api/rules/reorder. */
+
+let _rulesOrder = [];        // global rule ids, highest priority first
+let _rulesDataCache = null;  // last ruleData payload, for re-render on failure
+let _dragRuleId = null;      // rule being dragged (dataTransfer is opaque
+                             // during dragover, so track it ourselves)
+
+function _rulesRefreshData(rulesData) {
+  _rulesOrder = rulesData.rules.map(r => r.id);
+  _rulesDataCache = rulesData;
+}
+
+function _clearRuleDropMarks() {
+  for (const tr of document.querySelectorAll('.rule-row'))
+    tr.classList.remove('drop-before', 'drop-after', 'dragging');
+}
+
+function _ruleDropTarget(e) {
+  // Which side of the hovered row does the pointer indicate?
+  const tr = e.currentTarget;
+  const rect = tr.getBoundingClientRect();
+  const before = e.clientY < rect.top + rect.height / 2;
+  _clearRuleDropMarks();
+  tr.classList.add(before ? 'drop-before' : 'drop-after');
+  return before;
+}
+
+function ruleDragStart(e) {
+  const tr = e.currentTarget;
+  _dragRuleId = Number(tr.dataset.ruleId);
+  tr.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  // Firefox requires data to start a drag.
+  e.dataTransfer.setData('text/plain', String(_dragRuleId));
+}
+
+function ruleDragOver(e) {
+  if (_dragRuleId === null) return;
+  e.preventDefault();           // without this the drop won't fire
+  e.dataTransfer.dropEffect = 'move';
+  _ruleDropTarget(e);
+}
+
+function ruleDragLeave() {
+  _clearRuleDropMarks();
+}
+
+function ruleDragEnd() {
+  _clearRuleDropMarks();
+  _dragRuleId = null;
+}
+
+function ruleDrop(e) {
+  e.preventDefault();
+  const toId = Number(e.currentTarget.dataset.ruleId);
+  const before = _ruleDropTarget(e);
+  _clearRuleDropMarks();
+  const fromId = _dragRuleId;
+  _dragRuleId = null;
+  if (fromId === null || fromId === toId) return;
+  reorderRules(_moveRuleId(_rulesOrder, fromId, toId, before));
+}
+
+/* Pure: move `fromId` so it sits just before/after `toId`. */
+function _moveRuleId(order, fromId, toId, before) {
+  const next = order.filter(id => id !== fromId);
+  const idx = next.indexOf(toId);
+  if (idx === -1) return order;
+  next.splice(before ? idx : idx + 1, 0, fromId);
+  return next;
+}
+
+async function reorderRules(orderedIds) {
+  try {
+    await api('/api/rules/reorder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ordered_ids: orderedIds }),
+    });
+    _rulesOrder = orderedIds;
+    toast('Rule order updated');
+    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  } catch (err) {
+    toast('Reorder failed: ' + err.message + ' — order restored', 5000);
+    if (_rulesDataCache) {
+      renderRules(_rulesDataCache);
+      renderIgnoreRules(_rulesDataCache);
+    }
+  }
+}
+
 function renderRules(data) {
   const el = $id('rulesPanel');
   if (!el) return;
+  _rulesRefreshData(data);
   const rules = data.rules.filter(r => r.category !== 'Ignored');
   const list = rules.length
     ? '<table><thead><tr>' +
+      '<th style="width:30px"></th>' +
       '<th>Keyword</th><th>→ Category</th><th class="num">Matches</th><th style="width:40px"></th>' +
       '</tr></thead><tbody>' +
       rules.map(r => `
-        <tr>
+        <tr class="rule-row" draggable="true" data-rule-id="${r.id}"
+            ondragstart="ruleDragStart(event)" ondragover="ruleDragOver(event)"
+            ondragleave="ruleDragLeave(event)" ondrop="ruleDrop(event)"
+            ondragend="ruleDragEnd(event)">
+          <td class="rule-drag" title="Drag to change priority">⠿</td>
           <td class="desc" title="${esc(r.pattern)}">${esc(r.pattern)}</td>
           <td><span class="dot" style="background:${CAT_COLORS[r.category] || '#57606f'}"></span>${esc(r.category)}</td>
           <td class="num">${r.matches}</td>
@@ -388,13 +488,19 @@ function renderRules(data) {
 function renderIgnoreRules(data) {
   const el = $id('ignoreRulesPanel');
   if (!el) return;
+  _rulesRefreshData(data);
   const rules = data.rules.filter(r => r.category === 'Ignored');
   const list = rules.length
     ? '<table><thead><tr>' +
+      '<th style="width:30px"></th>' +
       '<th>Keyword</th><th>Effect</th><th class="num">Matches</th><th style="width:40px"></th>' +
       '</tr></thead><tbody>' +
       rules.map(r => `
-        <tr>
+        <tr class="rule-row" draggable="true" data-rule-id="${r.id}"
+            ondragstart="ruleDragStart(event)" ondragover="ruleDragOver(event)"
+            ondragleave="ruleDragLeave(event)" ondrop="ruleDrop(event)"
+            ondragend="ruleDragEnd(event)">
+          <td class="rule-drag" title="Drag to change priority">⠿</td>
           <td class="desc" title="${esc(r.pattern)}">${esc(r.pattern)}</td>
           <td><span class="badge badge-ignored" title="Matching rows are excluded from all totals but stay visible">⊘ Ignored</span></td>
           <td class="num">${r.matches}</td>
