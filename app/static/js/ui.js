@@ -775,7 +775,7 @@ function renderRules(data) {
   const list = rules.length
     ? '<table><thead><tr>' +
       '<th style="width:30px"></th>' +
-      '<th>Keyword</th><th>→ Category</th><th class="num">Matches</th><th style="width:40px"></th>' +
+      '<th>Keyword</th><th>→ Category</th><th class="num">Matches</th><th class="num" title="Net amount of the rows this rule categorizes (first match wins)">Net</th><th style="width:40px"></th>' +
       '</tr></thead><tbody>' +
       rules.map(r => `
         <tr class="rule-row" draggable="true" data-rule-id="${r.id}"
@@ -786,6 +786,7 @@ function renderRules(data) {
           <td class="desc" title="${esc(r.pattern)}">${esc(r.pattern)}</td>
           <td><span class="dot" style="background:${CAT_COLORS[r.category] || '#57606f'}"></span>${esc(r.category)}</td>
           <td class="num">${r.matches}</td>
+          <td class="num ${r.net < 0 ? 'neg' : r.net > 0 ? 'pos' : ''}">${fmtMoney(r.net)}</td>
           <td class="num"><button class="rule-del" title="Delete rule" onclick="deleteRule(${r.id})">×</button></td>
         </tr>`).join('') +
       '</tbody></table>'
@@ -813,7 +814,7 @@ function renderIgnoreRules(data) {
   const list = rules.length
     ? '<table><thead><tr>' +
       '<th style="width:30px"></th>' +
-      '<th>Keyword</th><th>Effect</th><th class="num">Matches</th><th style="width:40px"></th>' +
+      '<th>Keyword</th><th>Effect</th><th class="num">Matches</th><th class="num" title="Net amount of the rows excluded from all totals by this rule">Net</th><th style="width:40px"></th>' +
       '</tr></thead><tbody>' +
       rules.map(r => `
         <tr class="rule-row" draggable="true" data-rule-id="${r.id}"
@@ -824,6 +825,7 @@ function renderIgnoreRules(data) {
           <td class="desc" title="${esc(r.pattern)}">${esc(r.pattern)}</td>
           <td><span class="badge badge-ignored" title="Matching rows are excluded from all totals but stay visible">⊘ Ignored</span></td>
           <td class="num">${r.matches}</td>
+          <td class="num ${r.net < 0 ? 'neg' : r.net > 0 ? 'pos' : ''}">${fmtMoney(r.net)}</td>
           <td class="num"><button class="rule-del" title="Delete rule" onclick="deleteRule(${r.id})">×</button></td>
         </tr>`).join('') +
       '</tbody></table>'
