@@ -48,14 +48,17 @@ header {
  * (dates moved out of the header). Fixed min-height so an empty scope
  * (no data yet) doesn't shift the layout. */
 .page-range { color: var(--muted); font-size: 12px; margin: 0 0 20px; min-height: 1.5em; }
-nav { display: flex; gap: 2px; margin-left: 10px; }
+/* Nav is pushed to the right edge next to the import actions: a fixed-width
+ * brand on the left + auto margin on the nav is what used to leave the tabs
+ * floating in the middle of wide screens. */
+nav { display: flex; gap: 2px; margin-left: auto; }
 nav a {
   padding: 6px 12px; border-radius: 8px;
   color: var(--muted); font-size: 13px; font-weight: 500;
 }
 nav a:hover { color: var(--text); background: var(--panel-2); }
 nav a.active { color: var(--text); background: var(--panel-2); }
-.header-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 button, select {
   background: var(--panel-2); color: var(--text);

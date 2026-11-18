@@ -51,11 +51,13 @@ function setRangeSub(text) {
 }
 
 /* Header sub: scoped totals only. The date range lives in the in-page
- * .page-range label, so the header keeps one stable shape on every page. */
+ * .page-range label, so the header keeps one stable shape on every page.
+ * Transactions only — the account count moved out of the header per
+ * sr1us (the per-account table on the Overview page already shows it). */
 function totalsSub(s, fallback) {
-  const t = s && s.n_transactions, a = s ? s.n_accounts : 0;
+  const t = s && s.n_transactions;
   return t
-    ? `${t} transaction${t === 1 ? '' : 's'} · ${a} account${a === 1 ? '' : 's'}`
+    ? `${t} transaction${t === 1 ? '' : 's'}`
     : (fallback || '');
 }
 
