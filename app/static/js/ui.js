@@ -775,7 +775,7 @@ function renderRules(data) {
   const list = rules.length
     ? '<table><thead><tr>' +
       '<th style="width:30px"></th>' +
-      '<th>Keyword</th><th>→ Category</th><th class="num">Matches</th><th class="num" title="Net amount of the rows this rule categorizes (first match wins)">Net</th><th style="width:40px"></th>' +
+      '<th>Keyword</th><th>→ Category</th><th class="num">Matches</th><th class="num" title="Net of the rows this rule actually categorizes — first match wins, manual categories beat rules. − spend, + income">Net</th><th style="width:40px"></th>' +
       '</tr></thead><tbody>' +
       rules.map(r => `
         <tr class="rule-row" draggable="true" data-rule-id="${r.id}"

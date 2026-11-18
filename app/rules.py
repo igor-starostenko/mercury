@@ -216,26 +216,34 @@ def match_counts(con: duckdb.DuckDBPyConnection,
 def net_by_rule(con: duckdb.DuckDBPyConnection,
                 rules: list[Rule]) -> dict[int, float]:
     """Net amount per rule: signed sum of the amounts of the rows the
-    rule actually categorizes — the rows where it is the FIRST matching
-    enabled pattern in priority order (the same winner the
-    effective_transactions view picks for ``rule_category``).
+    rule actually categorizes — only rows where the RULE LAYER is the
+    effective source (effective ``override_source = 'rule'``), and
+    among those, only the rows where it is the FIRST matching enabled
+    pattern in priority order (the same winner the effective_transactions
+    view picks for ``rule_category``).
 
-    A row matching several patterns is counted once, for its winning
-    rule only, so nets never double-count across rules (the adjacent
-    match counts do — they are per-pattern). Signed: expenses negative,
-    income positive. Soft-deleted rows are excluded via the
-    effective_transactions view.
+    So a row matching several patterns is counted once, for its winning
+    rule only (nets never double-count across rules — the adjacent
+    match counts do, they are per-pattern), and a row the user manually
+    re-categorized does not count at all. Stored 'llm' and legacy-NULL
+    overrides lose to a rule match in the view; stored 'manual' (and
+    legacy 'rule') overrides win, so those rows are excluded here.
+    Signed: expenses negative, income positive. Soft-deleted rows are
+    excluded via the effective_transactions view.
     """
     nets: dict[int, float] = {r.id: 0.0 for r in rules}
     if rules:
         normed = [(r.id, normalize_match_text(r.pattern).lower()) for r in rules]
-        for desc, amount in con.execute(
-                "SELECT description, amount FROM effective_transactions").fetchall():
+        for desc, amount, src in con.execute(
+                "SELECT description, amount, override_source "
+                "FROM effective_transactions").fetchall():
+            if src != 'rule':
+                continue  # effective category did not come from the rule layer
             d = normalize_match_text(desc).lower()
             if not d or amount is None:
                 continue
             for rid, p in normed:
-                if p in d:
+                if p and p in d:
                     nets[rid] += float(amount)
-                    break
+                    break  # first match wins — shadowed rules get nothing
     return nets
