@@ -268,8 +268,15 @@ def classify():
 
     Rules already apply at read time (effective_transactions view), so
     by definition no unknown matches a rule — each one goes straight to
-    the local LLM (or its built-in rule fallback).
+    the local LLM. Returns 503 when no endpoint is configured (no silent
+    keyword fallback in that case); the fallback only runs when the
+    endpoint is set but unreachable.
     """
+    if not llm.llm_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="LLM is not configured — set MERCURY_LLM_ENDPOINT "
+                   "(and MERCURY_LLM_MODEL) and restart the server")
     con = get_con()
     try:
         unknown = analytics.unknown_categories(con, limit=100000)
@@ -444,7 +451,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/api/health")
 def health():
-    return {"ok": True}
+    return {"ok": True, "llm_configured": llm.llm_configured()}
 
 
 if __name__ == "__main__":

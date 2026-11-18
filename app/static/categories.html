@@ -85,11 +85,15 @@ function ovMatches(r) {
 function renderOverrides() {
   const rows = ovCache.filter(ovMatches);
   const pending = ovCache.filter(r => r.set_by === 'uncategorized' || r.set_by === 'unknown').length;
+  const noLlm = !window.LLM_CONFIGURED;
   $id('unknownCount').textContent = pending ? pending + ' need a category' : 'all categorized';
-  $id('classifyBtn').disabled = !pending;
+  $id('classifyBtn').disabled = !pending || noLlm;
+  $id('classifyBtn').title = noLlm
+    ? 'LLM not configured — set MERCURY_LLM_ENDPOINT and restart the server' : '';
   $id('ovHint').textContent = rows.length + ' shown'
     + (ovCache.length >= OV_LIMIT ? ' (first ' + OV_LIMIT + ')' : '')
-    + (ovFilter === 'all' ? ' · ' + OV_BASE_HINT : '');
+    + (ovFilter === 'all' ? ' · ' + OV_BASE_HINT : '')
+    + (noLlm && pending ? ' · LLM not configured, Classify is disabled' : '');
   if (!rows.length) {
     $id('overrides').innerHTML = '<p class="empty">'
       + (ovCache.length
@@ -154,7 +158,12 @@ async function renderAll() {
 }
 
 (async function init() {
-  CATS = await api('/api/standard-categories');
+  const [cats, health] = await Promise.all([
+    api('/api/standard-categories'),
+    api('/api/health'),
+  ]);
+  CATS = cats;
+  window.LLM_CONFIGURED = !!health.llm_configured;
   renderChrome('categories');
   try {
     await renderAll();
