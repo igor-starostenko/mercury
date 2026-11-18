@@ -289,10 +289,28 @@ def set_category_by_key(con: duckdb.DuckDBPyConnection, key: str,
         set_category(con, txn_id, category)
 
 
+_OVERRIDE_SET_BY = ("all", "manual", "llm", "rule", "uncategorized")
+_OVERRIDE_SORTS = {
+    "date": "v.txn_date",
+    # Case-insensitive plain order — DuckDB 2.0 has no numeric-aware
+    # collation, so this deviates from the old client-side
+    # localeCompare(numeric:true) only for digit runs of differing
+    # length ("TXN 2" vs "TXN 10") and case.
+    "description": "lower(v.description)",
+    "amount": "v.amount",
+}
+_OVERRIDE_SORT_DIR_DEFAULT = {"date": "desc", "description": "asc",
+                              "amount": "desc"}
+
+
 def override_rows(con: duckdb.DuckDBPyConnection,
                   limit: int = 200,
-                  include_uncategorized: bool = False) -> list[dict[str, Any]]:
-    """Transactions whose category is set — explicit or by rule (newest first).
+                  include_uncategorized: bool = False,
+                  set_by: str = "all",
+                  sort_by: str = "date",
+                  sort_dir: str | None = None,
+                  q: str | None = None) -> dict[str, Any]:
+    """Transactions whose category is set — explicit or by rule.
 
     Built on the effective_transactions view, so rows re-categorized by a
     live rule are included with ``set_by`` = 'rule' even though no
@@ -304,8 +322,76 @@ def override_rows(con: duckdb.DuckDBPyConnection,
     With ``include_uncategorized``, rows that have no override, no rule
     match and were missing a category in the CSV import are included as
     well, with ``set_by`` = 'uncategorized' (still uncategorized).
+
+    Filtering and sorting run in SQL over the FULL history, not over a
+    truncated page — ``LIMIT`` is applied after the server-side filter
+    and sort. Parameters:
+
+    - ``set_by``: 'all' (default), 'manual', 'llm', 'rule', or
+      'uncategorized' (rows still missing a category; the legacy
+      'unknown' badge has the same NULL-source shape and is included).
+    - ``sort_by``: 'date' (default), 'description' or 'amount';
+      ``sort_dir`` 'asc'/'desc' (per-key default: date desc,
+      description asc, amount desc). Ties break on ascending id, same
+      as the old client-side sort.
+    - ``q``: case-insensitive substring on the whitespace-normalized
+      description — the same matching the UI search and category rules
+      use, so the preview stays a true rule dry-run.
+
+    Returns ``{"rows": [...], "total": N, "uncategorized": M}``: the
+    top ``limit`` rows of the filtered + sorted full history, the total
+    number of rows matching the filter (so the UI can say "1000 of
+    4821"), and the full-history count of rows still uncategorized
+    (drives the "N need a category" badge and the Classify button —
+    correct even when the list window is smaller than the history).
     """
-    rows = con.execute("""
+    if set_by not in _OVERRIDE_SET_BY:
+        raise ValueError(f"set_by must be one of: {', '.join(_OVERRIDE_SET_BY)}")
+    if sort_by not in _OVERRIDE_SORTS:
+        raise ValueError(f"sort_by must be one of: {', '.join(_OVERRIDE_SORTS)}")
+    if sort_dir is None:
+        sort_dir = _OVERRIDE_SORT_DIR_DEFAULT[sort_by]
+    if sort_dir not in ("asc", "desc"):
+        raise ValueError("sort_dir must be 'asc' or 'desc'")
+
+    where = ["(v.override_source IS NOT NULL OR (? = 1 AND ("
+             "t.category IS NULL OR t.category = ''"
+             " OR t.category = 'Uncategorized')))"]
+    params: list[Any] = [int(include_uncategorized)]
+    if set_by in ("manual", "llm", "rule"):
+        where.append("v.override_source = ?")
+        params.append(set_by)
+    elif set_by == "uncategorized":
+        where.append("v.override_source IS NULL")
+    q_norm = " ".join((q or "").split())
+    if q_norm:
+        # Whitespace-normalized substring, exactly like the UI search
+        # and the category-rule matching.
+        where.append(
+            "instr(lower(regexp_replace(v.description, '\\s+', ' ', 'g')),"
+            " lower(?)) > 0")
+        params.append(q_norm)
+    where_sql = " AND ".join(where)
+
+    total, = con.execute(f"""
+        SELECT COUNT(*)
+        FROM effective_transactions AS v
+        JOIN transactions AS t ON t.id = v.id
+        WHERE {where_sql}
+    """, params).fetchone()
+
+    pending = 0
+    if include_uncategorized:
+        pending, = con.execute("""
+            SELECT COUNT(*)
+            FROM effective_transactions AS v
+            JOIN transactions AS t ON t.id = v.id
+            WHERE v.override_source IS NULL
+              AND (t.category IS NULL OR t.category = ''
+                   OR t.category = 'Uncategorized')
+        """).fetchone()
+
+    rows = con.execute(f"""
         SELECT v.id, v.source, v.account, CAST(v.txn_date AS VARCHAR),
                v.amount, v.description, v.category, t.category,
                v.override_source,
@@ -314,11 +400,10 @@ def override_rows(con: duckdb.DuckDBPyConnection,
                (COALESCE(v.category, '') = 'Ignored') AS ignored
         FROM effective_transactions AS v
         JOIN transactions AS t ON t.id = v.id
-        WHERE v.override_source IS NOT NULL
-           OR (? = 1 AND missing_csv)
-        ORDER BY v.txn_date DESC, v.id DESC
+        WHERE {where_sql}
+        ORDER BY {_OVERRIDE_SORTS[sort_by]} {sort_dir}, v.id ASC
         LIMIT ?
-    """, [int(include_uncategorized), limit]).fetchall()
+    """, [*params, int(limit)]).fetchall()
     enabled = rules.load_rules(con)
     out = []
     for r in rows:
@@ -342,7 +427,7 @@ def override_rows(con: duckdb.DuckDBPyConnection,
                            if matched else None),
             "rule_matches": len(matched),
         })
-    return out
+    return {"rows": out, "total": int(total), "uncategorized": int(pending)}
 
 
 def soft_delete(con: duckdb.DuckDBPyConnection, txn_id: int) -> bool:

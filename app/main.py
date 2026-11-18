@@ -230,9 +230,10 @@ def unknown(limit: int = 200):
 
 
 @app.get("/api/overrides")
-def overrides(limit: int = 200, include_uncategorized: bool = False):
-    """Transactions with a category set — explicit or by live rule
-    (newest first).
+def overrides(limit: int = 200, include_uncategorized: bool = False,
+              set_by: str = "all", sort_by: str = "date",
+              sort_dir: str | None = None, q: str | None = None):
+    """Transactions with a category set — explicit or by live rule.
 
     Rule re-categorizations are read-time, so they appear here with
     ``set_by`` = 'rule' without any stored override. ``set_by`` is
@@ -245,10 +246,24 @@ def overrides(limit: int = 200, include_uncategorized: bool = False):
     have no override, no rule match and were missing a category in the
     CSV import; those have ``set_by = "uncategorized"`` (still
     uncategorized).
+
+    Filtering and sorting run in SQL over the full history — ``LIMIT``
+    is applied after them, so a filter can never be applied to a
+    truncated page. ``set_by`` filters to one of all / manual / llm /
+    rule / uncategorized; ``sort_by`` is date / description / amount
+    with ``sort_dir`` asc or desc (defaults: date desc, description
+    asc, amount desc); ``q`` is a case-insensitive substring on the
+    whitespace-normalized description (the rule-matching preview).
+    The response is ``{"rows": [...], "total": N, "uncategorized":
+    M}`` — the window, the count of rows matching the filter, and the
+    full-history count of still-uncategorized rows.
     """
     con = get_con()
     try:
-        return analytics.override_rows(con, limit, include_uncategorized)
+        return analytics.override_rows(con, limit, include_uncategorized,
+                                       set_by, sort_by, sort_dir, q)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     finally:
         con.close()
 
