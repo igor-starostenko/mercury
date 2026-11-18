@@ -151,9 +151,21 @@ All / You / LLM / Rule / Unknown. Unknown shows the ones still
 uncategorized; All and You also include your re-categorizations of
 CSV-provided categories (the original CSV category is shown as "was: …"
 under the select). The category is editable inline (re-picking one
-marks the row as yours). `GET /api/overrides` returns the list as
-JSON; add `include_uncategorized=true` to also get the
-still-uncategorized rows (those carry `set_by = "uncategorized"`).
+marks the row as yours). The chip filter, the description search and
+the column sort all run **server-side over the full history** — the
+API filters and sorts everything in SQL and only then applies its
+limit, so "Unknown" shows every uncategorized transaction, not just
+the ones inside the first page. `GET /api/overrides` returns
+`{"rows": [...], "total": N, "uncategorized": M}`: the window, the
+count of rows matching the current filter, and the full-history count
+of still-uncategorized rows (drives the "N need a category" badge).
+Add `include_uncategorized=true` to also get the still-uncategorized
+rows (those carry `set_by = "uncategorized"`). Filter and sort
+parameters: `set_by=all|manual|llm|rule|uncategorized`,
+`sort_by=date|description|amount` with `sort_dir=asc|desc`
+(defaults: date desc, description asc, amount desc), and `q` for a
+case-insensitive description search (whitespace-normalized, the same
+matching as the rules).
 Overrides that predate source tracking are best-effort attributed on
 first startup: any whose category is exactly what the auto-classify
 rule fallback assigns to the description becomes `llm` (that is the

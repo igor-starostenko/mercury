@@ -73,43 +73,67 @@ window.onDataChanged = renderAll;
 const OV_SET_BY = { manual: 'you', llm: 'LLM', rule: 'rule', unknown: 'unknown', uncategorized: 'pending' };
 const OV_LIMIT = 1000;
 const OV_BASE_HINT = 'missing CSV category or re-categorized · re-pick a category to make it yours';
-let ovCache = [];
+/* The chip filter, description search and column sort all run on the
+ * SERVER over the full history (SQL filter + sort before LIMIT), so the
+ * window below is the top OV_LIMIT rows of whatever is currently
+ * filtered — not a filter applied to the first 1000 transactions. */
+let ovRows = [];
+let ovTotal = 0;
+let ovPendingTotal = 0;
 let ovFilter = 'all';
 let ovSearch = '';
+let ovSeq = 0;
+let ovSearchTimer = null;
 
-function ovMatches(r) {
-  if (ovFilter === 'all') return true;
-  // Unknown = still uncategorized (no override); legacy overrides whose
-  // source predates tracking land here too — neither is attributable
-  // to you/LLM/rule.
-  if (ovFilter === 'uncategorized') return r.set_by === 'uncategorized' || r.set_by === 'unknown';
-  return r.set_by === ovFilter;
+function ovQuery() {
+  const st = $id('overrides')._sortState || { key: 'date', dir: 'desc' };
+  const p = new URLSearchParams({
+    limit: String(OV_LIMIT), include_uncategorized: 'true',
+    set_by: ovFilter, sort_by: st.key, sort_dir: st.dir, q: ovSearch,
+  });
+  return '/api/overrides?' + p.toString();
+}
+async function loadOverrides() {
+  const seq = ++ovSeq;
+  let data;
+  try {
+    data = await api(ovQuery());
+  } catch (e) {
+    if (seq === ovSeq) toast('Failed to load: ' + e.message, 8000);
+    return;
+  }
+  if (seq !== ovSeq) return; // a newer filter/search/sort click superseded it
+  ovRows = data.rows;
+  ovTotal = data.total;
+  ovPendingTotal = data.uncategorized;
+  renderOverrides();
 }
 
 function renderOverrides() {
   const el = $id('overrides');
   if (!el._sortState) el._sortState = { key: 'date', dir: 'desc' };
   const st = el._sortState;
-  const rows = sortTxns(ovCache.filter(ovMatches)
-    .filter(t => txnSearchMatch(t, ovSearch)), st);
+  const rows = ovRows; // already filtered + sorted by the server
   const q = (ovSearch || '').trim();
   const qre = q ? txnSearchRegex(q) : null;
-  const pending = ovCache.filter(r => r.set_by === 'uncategorized' || r.set_by === 'unknown').length;
   const noLlm = !window.LLM_CONFIGURED;
-  $id('unknownCount').textContent = pending ? pending + ' need a category' : 'all categorized';
-  $id('classifyBtn').disabled = !pending || noLlm;
+  $id('unknownCount').textContent = ovPendingTotal
+    ? ovPendingTotal + ' need a category' : 'all categorized';
+  $id('classifyBtn').disabled = !ovPendingTotal || noLlm;
   $id('classifyBtn').title = noLlm
     ? 'LLM not configured — set MERCURY_LLM_ENDPOINT and restart the server' : '';
-  $id('ovHint').textContent = (q ? `for “${q}” · ` : '') + rows.length + ' shown'
-    + (ovCache.length >= OV_LIMIT ? ' (first ' + OV_LIMIT + ')' : '')
+  $id('ovHint').textContent = (q ? `for “${q}” · ` : '')
+    + (ovTotal > rows.length
+        ? rows.length + ' of ' + ovTotal + ' shown'
+        : rows.length + ' shown')
     + (ovFilter === 'all' && !q ? ' · ' + OV_BASE_HINT : '')
     + ((st.key !== 'date' || st.dir !== 'desc') ? ' · ' + txnSortLabel(st) : '')
-    + (noLlm && pending ? ' · LLM not configured, Classify is disabled' : '');
+    + (noLlm && ovPendingTotal ? ' · LLM not configured, Classify is disabled' : '');
   if (!rows.length) {
     $id('overrides').innerHTML = '<p class="empty">'
       + (q
-        ? `No matches for “${esc(q)}”. ${ovCache.length} transaction${ovCache.length === 1 ? '' : 's'} in this list${ovFilter !== 'all' ? ' (filter: ' + (OV_SET_BY[ovFilter] || ovFilter) + ')' : ''}.`
-        : (ovCache.length
+        ? `No matches for “${esc(q)}”.`
+        : (ovTotal
           ? (ovFilter === 'uncategorized' ? 'All transactions categorized. 🎉'
                                           : 'No ' + (OV_SET_BY[ovFilter] || ovFilter) + ' transactions.')
           : 'No categorized or pending transactions yet.'))
@@ -136,7 +160,7 @@ function renderOverrides() {
       </tbody>
     </table>`;
   wireCategorySelects(el);
-  el._detailRender = () => renderOverrides();
+  el._detailRender = () => loadOverrides();
   wireTxnSort(el);
 }
 
@@ -146,22 +170,23 @@ $id('ovFilters').addEventListener('click', e => {
   ovFilter = btn.dataset.by;
   $id('ovFilters').querySelectorAll('.ov-chip').forEach(b =>
     b.classList.toggle('active', b === btn));
-  renderOverrides();
+  loadOverrides();
 });
-/* Description search — same matching as category rules (see txnSearch*
- * in js/ui.js): the rows shown are exactly the rows a rule with the
- * typed pattern would catch, so a pattern can be tested before saving. */
+/* Description search — server-side, with the same matching as category
+ * rules (see txnSearch* in js/ui.js): the rows shown are exactly the
+ * rows a rule with the typed pattern would catch, so a pattern can be
+ * tested before saving. Debounced; out-of-order responses are dropped. */
 $id('ovSearch').addEventListener('input', () => {
   ovSearch = $id('ovSearch').value;
-  renderOverrides();
+  clearTimeout(ovSearchTimer);
+  ovSearchTimer = setTimeout(loadOverrides, 200);
 });
 
 async function renderAll() {
-  const [summary, cats, ruleData, overrides] = await Promise.all([
+  const [summary, cats, ruleData] = await Promise.all([
     api('/api/summary'),
     api('/api/categories'),
     api('/api/rules'),
-    api(`/api/overrides?limit=${OV_LIMIT}&include_uncategorized=true`),
   ]);
 
   $id('emptyHint').style.display = summary.n_transactions ? 'none' : 'block';
@@ -176,8 +201,9 @@ async function renderAll() {
   renderIgnoreRules(ruleData);
 
   // Merged categorization list: overrides + still-uncategorized rows.
-  ovCache = overrides;
-  renderOverrides();
+  // Chip/search/sort state is kept; the server filters + sorts the full
+  // history and returns the top window plus the true counts.
+  loadOverrides();
 }
 
 (async function init() {
