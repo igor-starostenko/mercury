@@ -166,6 +166,16 @@ most likely manual edits — stay `"unknown"`.
   re-importing the file does not bring it back.
 - `POST /api/transactions/{id}/restore` — undo a soft delete.
 
+### Sorting transactions
+
+Every transaction list (the Month page table and the per-category
+drill-down lists on Overview/Year/Categories) is sortable by **Date**,
+**Description**, and **Amount**. Click a column header to sort; click the
+same header again to flip the direction (▲ ascending / ▼ descending in
+the header). The list defaults to date, newest first. Sorting happens in
+the browser over the already-loaded rows — no extra API calls, and the
+category dropdowns keep working after a re-sort.
+
 ### Charts
 
 The cash-flow bar charts (Overview, Year, Month) default to **stacked by

@@ -132,8 +132,7 @@ async function renderMonth(month) {
   renderCategoryTable($id('catTable'), cats, { month });
 
   $id('txnCount').textContent = txns.length + ' transactions';
-  $id('txnTable').innerHTML = txnTableHTML(txns);
-  wireCategorySelects($id('txnTable'));
+  mountTxnTable($id('txnTable'), txns);
   setRangeSub(totalsSub(sum, 'no transactions in ' + monthLong(month)));
   setPageRange(sum.first_date, sum.last_date);
 }
