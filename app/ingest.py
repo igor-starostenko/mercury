@@ -482,7 +482,15 @@ CREATE_EFFECTIVE_VIEW_SQL = """
       SELECT t.*, o.category AS override_category, o.source AS override_source,
              (SELECT r.category FROM category_rules r
               WHERE r.enabled AND r.pattern <> ''
-                AND instr(lower(t.description), lower(r.pattern)) > 0
+                -- Match on whitespace-normalized text: bank extracts keep
+                -- runs of spaces ('U.S. BANK        WEB PYMT') while the
+                -- UI shows (and users copy) single-spaced text. DuckDB's
+                -- regexp_replace needs the 'g' flag or only the first
+                -- run is replaced.
+                AND instr(
+                        lower(regexp_replace(t.description, '\\s+', ' ', 'g')),
+                        lower(regexp_replace(r.pattern, '\\s+', ' ', 'g'))
+                      ) > 0
               ORDER BY r.position, r.id LIMIT 1) AS rule_category
       FROM transactions AS t
       LEFT JOIN category_overrides AS o ON o.txn_id = t.id

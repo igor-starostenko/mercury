@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Optional
 
 import urllib.request
@@ -183,7 +184,10 @@ _RULES: list[tuple[str, tuple[str, ...]]] = [
 
 
 def rule_classify(description: str) -> Optional[str]:
-    desc = (description or "").lower()
+    # Collapse whitespace runs: bank descriptions keep multiple spaces
+    # (e.g. 'U.S. BANK        WEB PYMT'), so multi-word needles must
+    # match the canonical form, not the raw text.
+    desc = re.sub(r"\s+", " ", (description or "")).strip().lower()
     if not desc:
         return None
     for cat, needles in _RULES:
