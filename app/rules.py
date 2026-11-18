@@ -1,7 +1,8 @@
 """User-defined category rules: keyword in description -> category.
 
 Rules are a pure read-time layer: a rule matches when its pattern occurs
-(case-insensitive substring) in a transaction's description, and the
+(case-insensitive substring, whitespace-normalized on both sides) in a
+transaction's description, and the
 effective_transactions view (ingest.py) applies the FIRST matching
 enabled rule in ``position`` order (the user rearranges rows by
 dragging them in the UI; ties fall back to id) whenever it computes an
@@ -17,6 +18,7 @@ beats an LLM override; everything beats the CSV-provided category.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -78,20 +80,33 @@ def load_rules(con: duckdb.DuckDBPyConnection,
             for i, p, c, e, pos in con.execute(sql).fetchall()]
 
 
+def normalize_match_text(value: Optional[str]) -> str:
+    """Canonical text for rule matching: whitespace runs -> single space.
+
+    Descriptions are stored as imported — real bank extracts keep runs
+    of spaces (e.g. 'U.S. BANK        WEB PYMT') — while the UI renders
+    them collapsed, so patterns copied from the UI use single spaces.
+    Matching in this canonical form (callers case-fold with .lower())
+    makes rules robust to that; it mirrors the whitespace normalization
+    of the dedup key (ingest.build_key).
+    """
+    return re.sub(r"\s+", " ", (value or "")).strip()
+
+
 def match_category(description: str, rules: list[Rule]) -> Optional[str]:
     """Category from the first matching rule, or None."""
-    d = (description or "").lower()
+    d = normalize_match_text(description).lower()
     if not d:
         return None
     for r in rules:
-        if r.pattern.lower() in d:
+        if normalize_match_text(r.pattern).lower() in d:
             return r.category
     return None
 
 
 def validate(pattern: str, category: str) -> tuple[str, str]:
-    """Strip inputs and reject bad ones (ValueError -> 400 upstream)."""
-    pattern = (pattern or "").strip()
+    """Normalize the pattern, strip inputs, reject bad ones (ValueError -> 400 upstream)."""
+    pattern = normalize_match_text(pattern)
     category = (category or "").strip()
     if not pattern:
         raise ValueError("pattern must not be empty")
@@ -111,7 +126,9 @@ def create_rule(con: duckdb.DuckDBPyConnection, pattern: str,
     # Duplicate patterns (case-insensitive) are confusing: one description
     # can only ever yield one category, so forbid the ambiguity.
     for r in load_rules(con, enabled_only=False):
-        if r.pattern.lower() == pattern.lower():
+        # Normalize both sides: existing rows may predate canonical
+        # storage and still hold raw whitespace runs.
+        if normalize_match_text(r.pattern).lower() == pattern.lower():
             raise ValueError(
                 f"a rule with pattern '{r.pattern}' already exists (id {r.id})")
     new_id = con.execute(
@@ -174,10 +191,13 @@ def match_counts(con: duckdb.DuckDBPyConnection,
     """
     matches: dict[int, int] = {r.id: 0 for r in rules}
     if rules:
+        normed = [(r.id, normalize_match_text(r.pattern).lower()) for r in rules]
         for _id, desc in con.execute(
                 "SELECT id, description FROM effective_transactions").fetchall():
-            d = (desc or "").lower()
-            for r in rules:
-                if r.pattern.lower() in d:
-                    matches[r.id] += 1
+            d = normalize_match_text(desc).lower()
+            if not d:
+                continue
+            for rid, p in normed:
+                if p in d:
+                    matches[rid] += 1
     return matches
