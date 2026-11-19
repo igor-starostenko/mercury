@@ -144,6 +144,42 @@ def test_delete_rule(tmp_path):
     con.close()
 
 
+def test_update_rule_category(tmp_path):
+    con = _conn(tmp_path, name="update.db")
+    r = rules.create_rule(con, "walmart", "Groceries")
+    r2 = rules.create_rule(con, "shell", "Food")
+    _txn(con, description="WALMART")
+
+    updated = rules.update_rule_category(con, r.id, "Beauty")
+    assert updated.category == "Beauty"
+    # Only the category moves: pattern, scope, and priority are
+    # untouched — the rule still wins from the same slot.
+    assert (updated.pattern, updated.source, updated.account) == \
+        ("walmart", None, None)
+    assert updated.position == r.position
+    assert rules.load_rules(con)[0].category == "Beauty"
+    # Read-time layer reshapes immediately; the other rule is untouched.
+    cat = con.execute(
+        "SELECT category FROM effective_transactions").fetchone()[0]
+    assert cat == "Beauty"
+    assert rules.load_rules(con)[1].category == "Food"
+
+    # Reserved "Ignored" is a valid target (panel move), and setting the
+    # same category again is a no-op that still returns the rule.
+    assert rules.update_rule_category(con, r2.id, "Ignored").category \
+        == "Ignored"
+    assert rules.update_rule_category(con, r2.id, "Ignored").category \
+        == "Ignored"
+    # Unknown id -> None (404 upstream).
+    assert rules.update_rule_category(con, 99, "Dining") is None
+    # Bad categories -> ValueError (400 upstream).
+    with pytest.raises(ValueError):
+        rules.update_rule_category(con, r.id, "   ")
+    with pytest.raises(ValueError):
+        rules.update_rule_category(con, r.id, "Y" * 65)
+    con.close()
+
+
 def test_disabled_rule_skipped(tmp_path):
     con = _conn(tmp_path)
     r1 = rules.create_rule(con, "walmart", "Groceries")

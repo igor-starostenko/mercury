@@ -998,6 +998,21 @@ function _scopeLabel(r) {
     : '<span style="color:var(--muted)">All</span>';
 }
 
+/* Editable category on an existing rule (PUT /api/rules/{id}): every
+   standard category plus the reserved "Ignored", current value
+   preselected. Picking "Ignored" moves the rule to the Ignore panel
+   and vice versa; pattern, scope, and priority are untouched, so the
+   re-render from the fresh /api/rules payload lands the row in its
+   new panel. ondragstart stopPropagation keeps row-dragging from
+   hijacking the dropdown. */
+function _ruleCatSelect(r) {
+  return `<select class="rule-cat" aria-label="Category for rule '${esc(r.pattern)}'"
+      onchange="updateRuleCategory(${r.id}, this.value)"
+      ondragstart="event.stopPropagation()">
+    ${CATS.map(c => `<option ${c === r.category ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+  </select>`;
+}
+
 function _rulesRefreshData(rulesData) {
   _rulesOrder = rulesData.rules.map(r => r.id);
   _rulesDataCache = rulesData;
@@ -1102,9 +1117,9 @@ function renderRules(data, accounts) {
             ondragend="ruleDragEnd(event)">
           <td class="rule-drag" title="Drag to change priority">⠿</td>
           <td class="desc" title="${esc(r.pattern)}">${esc(r.pattern)}</td>
-          <td title="Applies to: ${esc([r.source, r.account].filter(Boolean).join(' · ') || 'all sources and accounts')}"
-              >${_scopeLabel(r)}</td>
-          <td><span class="dot" style="background:${CAT_COLORS[r.category] || '#57606f'}"></span>${esc(r.category)}</td>
+          <td title="Applies to: ${esc([r.source, r.account].filter(Boolean).join(' · ') || 'all sources and accounts')}">
+              ${_scopeLabel(r)}</td>
+          <td>${_ruleCatSelect(r)}</td>
           <td class="num">${r.matches}</td>
           <td class="num ${r.net < 0 ? 'neg' : r.net > 0 ? 'pos' : ''}">${fmtMoney(r.net)}</td>
           <td class="num"><button class="rule-del" title="Delete rule" onclick="deleteRule(${r.id})">×</button></td>
@@ -1144,7 +1159,7 @@ function renderIgnoreRules(data, dateIgData, accounts) {
       '<th style="width:30px"></th>' +
       '<th>Keyword</th>' +
       '<th title="Where the rule applies — empty means every source and account">Scope</th>' +
-      '<th>Effect</th><th class="num">Matches</th><th class="num" title="Net amount of the rows excluded from all totals by this rule">Net</th><th style="width:40px"></th>' +
+      '<th>→ Category</th><th class="num">Matches</th><th class="num" title="Net amount of the rows excluded from all totals by this rule">Net</th><th style="width:40px"></th>' +
       '</tr></thead><tbody>' +
       rules.map(r => `
         <tr class="rule-row" draggable="true" data-rule-id="${r.id}"
@@ -1155,7 +1170,7 @@ function renderIgnoreRules(data, dateIgData, accounts) {
           <td class="desc" title="${esc(r.pattern)}">${esc(r.pattern)}</td>
           <td title="Applies to: ${esc([r.source, r.account].filter(Boolean).join(' · ') || 'all sources and accounts')}"
               >${_scopeLabel(r)}</td>
-          <td><span class="badge badge-ignored" title="Matching rows are excluded from all totals but stay visible">⊘ Ignored</span></td>
+          <td>${_ruleCatSelect(r)}</td>
           <td class="num">${r.matches}</td>
           <td class="num ${r.net < 0 ? 'neg' : r.net > 0 ? 'pos' : ''}">${fmtMoney(r.net)}</td>
           <td class="num"><button class="rule-del" title="Delete rule" onclick="deleteRule(${r.id})">×</button></td>
@@ -1309,5 +1324,27 @@ async function deleteRule(id) {
     if (window.onDataChanged) setTimeout(onDataChanged, 400);
   } catch (err) {
     toast('Delete failed: ' + err.message, 5000);
+  }
+}
+
+/* Change the category of an already-saved rule (the row dropdown in
+   either panel). Pattern, scope, and priority are untouched server-side.
+   On failure, re-render both panels from the cache so the dropdown
+   snaps back to the stored category. */
+async function updateRuleCategory(id, category) {
+  try {
+    await api('/api/rules/' + id, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category }),
+    });
+    toast('Rule now assigns ' + category);
+    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  } catch (err) {
+    toast('Could not update rule: ' + err.message, 5000);
+    if (_rulesDataCache) {
+      renderRules(_rulesDataCache);
+      renderIgnoreRules(_rulesDataCache);
+    }
   }
 }

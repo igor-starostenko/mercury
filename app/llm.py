@@ -29,7 +29,7 @@ import urllib.error
 STANDARD_CATEGORIES = [
     "Groceries", "Dining", "Transportation", "Housing", "Utilities",
     "Subscriptions", "Entertainment", "Shopping", "Travel", "Health",
-    "Insurance", "Investing", "Income", "Fees", "Transfers",
+    "Beauty", "Insurance", "Investing", "Income", "Fees", "Transfers",
     "Donations", "Education", "Other",
 ]
 

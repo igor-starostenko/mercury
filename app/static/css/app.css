@@ -191,6 +191,7 @@ tr.detail-row > td { background: #12151c; padding: 0; }
 .rule-del { background: none; border: none; border-radius: 6px; color: var(--muted);
   font-size: 17px; line-height: 1; padding: 2px 8px; }
 .rule-del:hover { color: var(--spend); border-color: var(--spend); background: rgba(255, 107, 107, .08); }
+.rule-cat { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; font-size: 12px; }
 .txn-del { background: none; border: none; border-radius: 6px; color: var(--muted);
   font-size: 15px; line-height: 1; padding: 2px 7px; }
 .txn-del:hover { color: var(--spend); background: rgba(255, 107, 107, .08); }
