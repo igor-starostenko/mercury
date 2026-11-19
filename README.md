@@ -72,6 +72,12 @@ background; the database only contains what you uploaded.
   (default `http://localhost:11434/v1/chat/completions` — Ollama),
   `MERCURY_LLM_MODEL` (default `llama3.2`), and `MERCURY_LLM_API_KEY`
   (sent as `Authorization: Bearer *** when set).
+  Descriptions are sent in small batches (25 per request), so a long
+  run stays robust and a failing batch only costs itself (the keyword
+  rules cover it). For thinking models (Qwen3 and similar) the request
+  also asks the server to disable reasoning tokens via
+  `chat_template_kwargs`; servers that reject the field are retried
+  without it, once.
   "Ollama by default"
   only means the default endpoint points at Ollama's OpenAI-compatible
   API — nothing is required to be running: if the endpoint is
