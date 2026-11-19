@@ -495,6 +495,13 @@ CREATE_EFFECTIVE_VIEW_SQL = """
              o.category AS override_category, o.source AS override_source,
              (SELECT r.category FROM category_rules r
               WHERE r.enabled AND r.pattern <> ''
+                -- Scope (NULL = All): the rule must admit this row.
+                -- The account is compared against the row's DISPLAY
+                -- label (import's current label wins — Manage Imports
+                -- rename), so a scoped rule follows renames exactly
+                -- like the category chain below.
+                AND (r.source  IS NULL OR r.source  = t.source)
+                AND (r.account IS NULL OR r.account = COALESCE(ci.account, t.account))
                 -- Match on whitespace-normalized text: bank extracts keep
                 -- runs of spaces ('U.S. BANK        WEB PYMT') while the
                 -- UI shows (and users copy) single-spaced text. DuckDB's

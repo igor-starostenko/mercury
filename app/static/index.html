@@ -128,8 +128,9 @@ async function renderAll() {
   renderCategoryTable($id('catTable'), cats, {});
 
   // Custom category rules (keyword -> category bulk override).
-  renderRules(ruleData);
-  renderIgnoreRules(ruleData, dateIg);
+  // Accounts feed the rule scope dropdowns (source/account filters).
+  renderRules(ruleData, accounts);
+  renderIgnoreRules(ruleData, dateIg, accounts);
 
   // Accounts.
   $id('accounts').innerHTML = accounts.length

@@ -420,7 +420,8 @@ def override_rows(con: duckdb.DuckDBPyConnection,
         # and how many more would be shadowed by it. Same matching as
         # the effective_transactions SQL, so the UI can show, test and
         # verify rules before/without applying anything.
-        matched = rules.matching_rules(r[5], enabled)
+        matched = rules.matching_rules(r[5], enabled,
+                                       source=r[1], account=r[2])
         out.append({
             "id": r[0], "source": r[1], "account": r[2], "date": r[3],
             "amount": r[4], "description": r[5],
@@ -510,7 +511,8 @@ def transactions(con: duckdb.DuckDBPyConnection,
     enabled = rules.load_rules(con)
     out = []
     for r in rows:
-        matched = rules.matching_rules(r[5], enabled)
+        matched = rules.matching_rules(r[5], enabled,
+                                       source=r[1], account=r[2])
         # Effective category source for this row: override_source is
         # already the view's resolution (manual > rule > llm); fall back
         # to the CSV value when nothing else claims the row.

@@ -48,6 +48,9 @@ async def lifespan(_: FastAPI):
         con.execute(ingest.CREATE_DELETED_SQL)
         con.execute(rules.CREATE_RULES_SQL)
         rules.ensure_rule_position(con)
+        # Scope columns must exist before the view: the view's rule
+        # subquery references category_rules.source/account.
+        rules.ensure_rule_scope(con)
         # Date ignores must exist before the view: the view's
         # date_ignored column references the table.
         con.execute(date_ignores.CREATE_DATE_IGNORES_SQL)
@@ -484,6 +487,10 @@ async def standard_categories():
 class RuleBody(BaseModel):
     pattern: str
     category: str
+    # Optional scope (default All): restrict the rule to one bank
+    # and/or one account (the account's current display label).
+    source: str | None = None
+    account: str | None = None
 
 
 class RuleReorderBody(BaseModel):
@@ -507,6 +514,7 @@ def list_rules():
             "rules": [{"id": r.id, "pattern": r.pattern,
                        "category": r.category, "enabled": r.enabled,
                        "position": r.position,
+                       "source": r.source, "account": r.account,
                        "matches": matches.get(r.id, 0),
                        "net": round(nets.get(r.id, 0.0), 2)}
                       for r in rule_list],
@@ -520,12 +528,15 @@ def create_rule(body: RuleBody):
     con = get_con()
     try:
         try:
-            r = rules.create_rule(con, body.pattern, body.category)
+            r = rules.create_rule(con, body.pattern, body.category,
+                                  source=body.source,
+                                  account=body.account)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         return {"id": r.id, "pattern": r.pattern,
                 "category": r.category, "enabled": True,
-                "position": r.position}
+                "position": r.position,
+                "source": r.source, "account": r.account}
     finally:
         con.close()
 
