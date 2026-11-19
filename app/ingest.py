@@ -429,10 +429,15 @@ CREATE_TABLE_SQL = """
 #   category_rules               -> keyword -> category rules, applied at
 #                                   read time (no per-row writes)
 #   deleted_transactions         -> soft-deleted rows (hidden from all reads)
+#   csv_imports                  -> which file each row came from (app/imports);
+#                                   its `account` column is the import's
+#                                   current account label (Manage Imports)
 #
 # Every read goes through the effective_transactions view, which layers:
 # explicit override (manual or legacy rule) > first matching enabled rule
-# > LLM override > original CSV category. Deleted rows are filtered out.
+# > LLM override > original CSV category. Deleted rows are filtered out,
+# and each row's account is mapped to its import's current label, so
+# renaming an import re-labels all of its rows without rewriting them.
 # ---------------------------------------------------------------------------
 CREATE_OVERRIDES_SQL = """
     CREATE TABLE IF NOT EXISTS category_overrides (
@@ -464,7 +469,13 @@ CREATE_DELETED_SQL = """
 
 CREATE_EFFECTIVE_VIEW_SQL = """
     CREATE OR REPLACE VIEW effective_transactions AS
-    SELECT x.id, x.source, x.account, x.txn_date, x.amount, x.description,
+    SELECT x.id, x.source,
+           -- Display account: the import's current label wins over the
+           -- value parsed at import time (Manage Imports rename). The
+           -- stored row is never changed — this mapping is read-time,
+           -- exactly like the category chain below.
+           COALESCE(x.import_account, x.account) AS account,
+           x.txn_date, x.amount, x.description,
            CASE
              WHEN x.override_source IN ('manual', 'rule')
                THEN x.override_category
@@ -480,7 +491,8 @@ CREATE_EFFECTIVE_VIEW_SQL = """
            x.date_ignored,
            x.raw_category, x.currency, x.key, x.classified
     FROM (
-      SELECT t.*, o.category AS override_category, o.source AS override_source,
+      SELECT t.*, ci.account AS import_account,
+             o.category AS override_category, o.source AS override_source,
              (SELECT r.category FROM category_rules r
               WHERE r.enabled AND r.pattern <> ''
                 -- Match on whitespace-normalized text: bank extracts keep
@@ -508,6 +520,7 @@ CREATE_EFFECTIVE_VIEW_SQL = """
                                            AND t.txn_date <= di.end_date)
              ) AS date_ignored
       FROM transactions AS t
+      LEFT JOIN csv_imports AS ci ON ci.id = t.import_id
       LEFT JOIN category_overrides AS o ON o.txn_id = t.id
       WHERE t.id NOT IN (SELECT txn_id FROM deleted_transactions)
     ) AS x
@@ -571,7 +584,8 @@ def parse_file_bytes(name: str, data: bytes,
 
 
 def merge_txns(con: duckdb.DuckDBPyConnection,
-               txns: list[Txn]) -> tuple[int, int]:
+               txns: list[Txn],
+               import_id: int | None = None) -> tuple[int, int]:
     """Merge parsed transactions into the table by stable key.
 
     Rows whose key already exists (from any earlier upload) are skipped, so
@@ -582,11 +596,19 @@ def merge_txns(con: duckdb.DuckDBPyConnection,
     stored as-is, and rules apply to new rows at read time through the
     effective_transactions view, exactly like existing rows.
 
+    `import_id` (csv_imports.id) ties the NEW rows to the file they came
+    from — the basis for Manage Imports (re-label or delete an import as a
+    a unit). Already-present (deduped) rows keep their original import.
+
     Returns (total_rows, new_rows).
     """
     con.execute(CREATE_TABLE_SQL)
     con.execute(CREATE_OVERRIDES_SQL)
     ensure_override_source(con)
+    # import_id column (app/imports) — defensive: the lifespan creates it,
+    # but this merge must stand alone too.
+    from . import imports as _imports  # local import: no cycle at module load
+    _imports.ensure_import_column(con)
     existing = {k for (k,) in con.execute(
         "SELECT key FROM transactions").fetchall()}
     seen: set[str] = set()
@@ -606,11 +628,16 @@ def merge_txns(con: duckdb.DuckDBPyConnection,
         try:
             # The row stores the CSV-provided category as-is (originals
             # stay unmodified, so re-imports and overrides never fight).
+            # Explicit column list: import_id sits last (added by a
+            # migration on pre-existing databases).
             con.executemany(
-                "INSERT INTO transactions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO transactions "
+                "(id, source, account, txn_date, amount, description, "
+                " category, raw_category, currency, key, classified, import_id) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 [[max_id + i, t.source, t.account, t.date, t.amount,
                   t.description, t.category, t.raw_category, t.currency,
-                  t.key, bool(t.category)]
+                  t.key, bool(t.category), import_id]
                  for i, t in enumerate(new, start=1)])
             con.execute("COMMIT")
         except Exception:

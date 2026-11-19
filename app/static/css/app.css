@@ -246,6 +246,36 @@ mark {
 .rule-note-active { color: #ffc14d; }
 .setby-inline { margin-left: 6px; }
 
+/* Manage Imports panel: the tools row and the imports table. */
+.imports-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.imports-tools .hint { color: var(--muted); font-size: 12px; opacity: .75;
+  flex: 1 1 100%; margin-top: 2px; }
+.imports-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.imports-table th { text-align: left; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--muted); padding: 4px 8px;
+  border-bottom: 1px solid var(--border); }
+.imports-table td { padding: 7px 8px; border-bottom: 1px solid var(--border);
+  vertical-align: middle; }
+.imports-table .num { text-align: right; }
+.imp-file { display: inline-block; max-width: 300px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.imp-legacy { color: var(--muted); font-style: italic; }
+.imp-acct { cursor: default; }
+.imp-rename {
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--accent); border-radius: 6px;
+  padding: 4px 8px; font-size: 13px; font-family: inherit;
+  width: 160px; margin-right: 6px;
+}
+.imp-rename:focus { outline: none; }
+.imp-save { background: var(--accent); border: none; border-radius: 6px;
+  color: #111; padding: 5px 10px; font-size: 12px; cursor: pointer; }
+.imp-save:hover { filter: brightness(1.08); }
+.imp-cancel { background: none; border: 1px solid var(--border);
+  border-radius: 6px; color: var(--muted); padding: 5px 10px;
+  font-size: 12px; cursor: pointer; margin-left: 4px; }
+.imp-cancel:hover { color: var(--text); }
+
 @media (max-width: 860px) {
   header { padding: 10px 14px; }
   main { padding: 16px 14px 40px; }

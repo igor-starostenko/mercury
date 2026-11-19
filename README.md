@@ -45,17 +45,39 @@ printed on the startup line `database: ...`. Unset, the default
 
 ### Data
 
-Import bank CSVs from the UI (top bar): **Import CSV files** picks
-individual files, **Import folder** picks a whole directory (e.g. your
-bank-exports folder) and sends every file in one request. Formats are
-auto-detected by filename (Wells Fargo, Chase, Apple Card, US Bank) —
-keep the bank's original filenames. Nothing is scanned from disk in the
-background; the database only contains what you uploaded.
+Import bank CSVs from the UI (top bar): **Manage Imports** opens the
+import panel, where **Import CSV files** picks individual files and
+**Import folder** picks a whole directory (e.g. your bank-exports
+folder) and sends every file in one request. Formats are auto-detected
+by filename (Wells Fargo, Chase, Apple Card, US Bank) — keep the bank's
+original filenames. Nothing is scanned from disk in the background; the
+database only contains what you uploaded.
+
+Every upload is tracked as one *import* (which file it came from), shown
+in the Manage Imports panel:
+
+- **Rename an import's account** — the account label parsed from the
+  filename is editable per import, so a second checking account at the
+  same bank can be told apart (e.g. `Wells Fargo — Checking` →
+  `Checking #2`). The re-label is retroactive: every report reads
+  through the effective view, which maps each row's account to its
+  import's current label. The stored rows are never rewritten, so
+  re-uploading the same file still dedupes under the new name.
+- **Delete an import** — removes only that file's transactions (plus
+  their per-transaction overrides), keeping category rules and every
+  other import untouched.
+
+- `GET /api/imports` — all imports with their current account label,
+  row count, and date span.
+- `POST /api/imports/{id}/account` — `{"account": "…"}` re-labels the
+  import's account for all of its rows.
+- `DELETE /api/imports/{id}?source=…` — deletes an import's rows; the
+  `source` filter scopes a synthetic "earlier import" group to one bank.
 
 - `POST /api/upload` — multipart form, field `files` (one or more CSVs).
-  Rows are merged into the table by stable key: duplicates are skipped,
-  original imports and existing edits are preserved, re-uploading is a
-  no-op.
+  Rows are merged into the table by stable key and stamped with the
+  import they came from: duplicates are skipped, original imports and
+  existing edits are preserved, re-uploading is a no-op.
 - `uv run python generate_samples.py` — generates synthetic sample CSVs in
   `app/data/extracts/` (no real data is stored in this repo). These are
   the "dummy data" behind the demo dashboard: generate them, then import
