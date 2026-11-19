@@ -266,6 +266,34 @@ function flowStackPlan(byCategory) {
   return { keep, merged };
 }
 
+/* Trailing rolling average over a fixed window of calendar months.
+ * valueKeys/values: the FULL history (sorted 'YYYY-MM' buckets, may have
+ * gaps — gap months count as zero inside a window data already covers);
+ * returns one value per key in targetKeys (defaults to valueKeys, which
+ * lets a year view average across the prior year from all-time data).
+ * The denominator is the calendar months of the window that fall inside
+ * the data history, so the average ramps up during the first year
+ * instead of dividing a few months' total by 12. */
+function trailingAvg(valueKeys, values, windowMonths, targetKeys) {
+  const targets = targetKeys || valueKeys;
+  if (!valueKeys.length || !targets.length) return targets.map(() => 0);
+  const toT = k => { const p = k.split('-'); return Number(p[0]) * 12 + Number(p[1]) - 1; };
+  const val = new Map(valueKeys.map((k, i) => [k, Number(values[i]) || 0]));
+  const first = toT(valueKeys[0]);
+  const last = toT(valueKeys[valueKeys.length - 1]);
+  return targets.map(t => {
+    const end = toT(t);
+    const start = Math.max(end - (windowMonths - 1), first);
+    if (end < first || start > last) return 0;
+    let sum = 0;
+    for (let x = start; x <= end; x++) {
+      sum += val.get(String(Math.floor(x / 12)) + '-' +
+        String(x % 12 + 1).padStart(2, '0')) || 0;
+    }
+    return Math.round(sum / (end - start + 1) * 100) / 100;
+  });
+}
+
 /* cfg: {
  *   labels:     display labels for the x axis,
  *   keys:       bucket keys aligned with labels ('YYYY-MM', or the ISO
@@ -273,6 +301,9 @@ function flowStackPlan(byCategory) {
  *   spend:      zero-filled total spend per bucket (totals view + the
  *               stacked view's tooltip footer),
  *   income:     zero-filled total income per bucket,
+ *   avgSpend:   optional per-bucket rolling 12-month average spend —
+ *               drawn as a line over the bars (same length as spend),
+ *   avgIncome:  same for income,
  *   byCategory: [{key, category, spend, income}] rows for the stacked
  *               view (no row for a (bucket, category) without activity),
  *   modeKey:    localStorage key for the view toggle,
@@ -394,6 +425,24 @@ function makeFlowChart(canvas, cfg) {
     options.plugins.tooltip.callbacks.footer = items =>
       'Spend: ' + fmtMoney(cfg.spend[items[0].dataIndex]) +
       '   ·   Income: ' + fmtMoney(cfg.income[items[0].dataIndex]);
+  }
+  // Optional overlay: trailing 12-month rolling averages as lines. Each
+  // line gets its OWN stack group: on the stacked (by-category) y-scale
+  // Chart.js accumulates every dataset into a `${xId}.${yId}.${stack||type}`
+  // group, so sharing a group (or omitting `stack` — the default group is
+  // per chart TYPE, and both lines are 'line') would draw the income line
+  // on top of the spend line instead of from zero.
+  if (cfg.avgSpend || cfg.avgIncome) {
+    const line = (label, data, color, stack) => ({
+      label, data, type: 'line', stack,
+      borderColor: color, backgroundColor: color, borderWidth: 2,
+      pointRadius: 2.5, pointHoverRadius: 4, pointBackgroundColor: color,
+      tension: .3, fill: false,
+    });
+    if (cfg.avgSpend) datasets.push(
+      line('Spend · 12-mo avg', cfg.avgSpend, '#ff6b6b', 'avg-spend'));
+    if (cfg.avgIncome) datasets.push(
+      line('Income · 12-mo avg', cfg.avgIncome, '#38c172', 'avg-income'));
   }
   const chart = new Chart(canvas, {
     type: 'bar',

@@ -26,7 +26,7 @@
         <button type="button" data-mode="category">By category</button>
         <button type="button" data-mode="totals">Totals</button>
       </div>
-      <span class="hint">all time · click a bar for the month view</span>
+      <span class="hint">all time · lines: trailing 12-month average · click a bar for the month view</span>
     </div>
     <div class="panel"><canvas id="flowChart"></canvas></div>
   </section>
@@ -96,11 +96,15 @@ async function renderAll() {
     ...monthly.spend.map(d => d.month),
     ...monthly.income.map(d => d.month),
   ])].sort();
+  const spend = months.map(m => monthly.spend.find(d => d.month === m)?.spend || 0);
+  const income = months.map(m => monthly.income.find(d => d.month === m)?.income || 0);
   makeFlowChart($id('flowChart'), _flowCfg = {
     labels: months.map(monthLabel),
     keys: months,
-    spend: months.map(m => monthly.spend.find(d => d.month === m)?.spend || 0),
-    income: months.map(m => monthly.income.find(d => d.month === m)?.income || 0),
+    spend,
+    income,
+    avgSpend: trailingAvg(months, spend, 12),
+    avgIncome: trailingAvg(months, income, 12),
     byCategory: (monthly.flow_by_category || []).map(r =>
       ({ key: r.bucket, category: r.category,
          spend: r.spend, income: r.income })),
