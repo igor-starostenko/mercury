@@ -127,6 +127,18 @@ income. `GET /api/transactions` rows carry an `"ignored": true` flag
 when this applies; deleting the rule (or picking a real category on the
 row) un-ignores it.
 
+The same box also holds **date-based ignores**: pick a mode (Before /
+Within / After) and one or two dates. Matching is on `txn_date` —
+"Before 2025-01-01" covers everything before that date (the date
+itself is kept), "After" covers everything after it, "Within" covers
+both end dates inclusive. Date-ignored rows get the same treatment as
+keyword-ignored ones — excluded from every total, still listed,
+flagged — and when a month or year is left with no counting rows it
+disappears entirely from the flow chart, period selector, year cards
+and month summaries, exactly like a period with no data. Multiple
+rules stack; they are read-time only and the originals are never
+modified.
+
 - `GET /api/rules` — rules in evaluation order, with live per-rule
   match counts.
 - `POST /api/rules` — add a rule: `{"pattern": "walmart",
@@ -137,6 +149,14 @@ row) un-ignores it.
   priority first; 400 with "refresh and retry" on stale client state).
 - `DELETE /api/rules/{id}` — remove a rule (rows it classified revert
   immediately).
+- `GET /api/date-ignores` — date-based ignore rules, with a live
+  count of the rows each one excludes from the totals.
+- `POST /api/date-ignores` — add one: `{"kind": "before" | "range" |
+  "after", "start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}` (`range`
+  requires `end`; 400 on an unknown kind, a malformed date, an
+  inverted range, or an exact duplicate).
+- `DELETE /api/date-ignores/{id}` — remove a date ignore; its rows
+  re-enter every total immediately.
 
 ### Editing imported data
 

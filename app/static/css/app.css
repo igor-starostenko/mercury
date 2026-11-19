@@ -203,6 +203,17 @@ tr.detail-row > td { background: #12151c; padding: 0; }
 tr.rule-row.dragging { opacity: .4; }
 tr.rule-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
 tr.rule-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+/* Date-based ignores inside the "Ignore transactions" panel */
+.date-ig { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 14px; }
+.date-ig-head { font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em;
+  font-weight: 600; color: var(--muted); margin: 0 0 10px; }
+.date-ig .rule-form input[type=date] {
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 7px 12px; font-size: 13px; font-family: inherit;
+  color-scheme: dark;
+}
+.date-ig .rule-form input[type=date]:focus { outline: none; border-color: var(--accent); }
 
 /* ------------------------------------------------- transaction search */
 /* Shared by the "Transaction categorization" list (Categories) and the

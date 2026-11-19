@@ -890,11 +890,17 @@ function renderRules(data) {
 
 /* Dedicated "Ignore transactions" box: pattern rules whose matches are
    excluded from every total (reserved category "Ignored"). Rows stay
-   visible in lists, dimmed and tagged. */
-function renderIgnoreRules(data) {
+   visible in lists, dimmed and tagged. Below the keyword rules, the
+   panel also holds date-based ignores (before / within / after a range)
+   — same effect, matched by txn_date instead of description. */
+let _dateIgCache = [];  // last /api/date-ignores items, for re-render
+                        // paths that don't refetch (e.g. reorder failure)
+
+function renderIgnoreRules(data, dateIgData) {
   const el = $id('ignoreRulesPanel');
   if (!el) return;
   _rulesRefreshData(data);
+  if (dateIgData) _dateIgCache = dateIgData.ignores || [];
   const rules = data.rules.filter(r => r.category === 'Ignored');
   const list = rules.length
     ? '<table><thead><tr>' +
@@ -921,7 +927,96 @@ function renderIgnoreRules(data) {
              placeholder="Keyword, e.g. 'internal transfer' or 'to savings'">
       <button type="submit">Ignore matches</button>
     </form>
-    ${list}`;
+    ${list}
+    ${_dateIgSection()}`;
+}
+
+/* --------------------------------------------- date-based ignores (panel) */
+/* Before / within / after a date range — matched by txn_date at read
+   time, same treatment as the keyword rules: excluded from every total,
+   still listed (dimmed, flagged). A month or year fully covered by a
+   date ignore has no aggregate row, so its bars/cards disappear. */
+function dateIgLabel(r) {
+  if (r.kind === 'before') return 'Everything before ' + r.start;
+  if (r.kind === 'after') return 'Everything after ' + r.start;
+  return 'Within ' + r.start + ' → ' + r.end;
+}
+
+function _dateIgSection() {
+  const items = _dateIgCache;
+  const list = items.length
+    ? '<table><thead><tr>' +
+      '<th>Scope</th><th class="num">Txns</th>' +
+      '<th class="num" title="Net amount of the rows excluded from all totals by this range">Net</th>' +
+      '<th style="width:40px"></th>' +
+      '</tr></thead><tbody>' +
+      items.map(r => `
+        <tr>
+          <td class="desc" title="${esc(dateIgLabel(r))}">${esc(dateIgLabel(r))}</td>
+          <td class="num">${r.n}</td>
+          <td class="num ${r.net < 0 ? 'neg' : r.net > 0 ? 'pos' : ''}">${fmtMoney(r.net)}</td>
+          <td class="num"><button class="rule-del" title="Delete date ignore" onclick="deleteDateIgnore(${r.id})">×</button></td>
+        </tr>`).join('') +
+      '</tbody></table>'
+    : '<p class="empty" style="padding:14px">No date ignores yet — pick a mode and a date above.</p>';
+  return `
+    <div class="date-ig">
+      <h3 class="date-ig-head">By date</h3>
+      <form class="rule-form" onsubmit="addDateIgnore(event)">
+        <select id="dateIgKind" onchange="dateIgKindChanged()" aria-label="Date ignore mode">
+          <option value="before">Before</option>
+          <option value="range">Within</option>
+          <option value="after">After</option>
+        </select>
+        <input type="date" id="dateIgStart" required>
+        <input type="date" id="dateIgEnd" disabled>
+        <button type="submit">Ignore dates</button>
+      </form>
+      <p class="hint" style="margin:-6px 0 12px">
+        “Before 2025-01-01” keeps that date; “After” keeps it too; “Within” covers both end dates.
+      </p>
+      ${list}
+    </div>`;
+}
+
+function dateIgKindChanged() {
+  const isRange = $id('dateIgKind').value === 'range';
+  $id('dateIgEnd').disabled = !isRange;
+  if (!isRange) $id('dateIgEnd').value = '';
+}
+
+async function addDateIgnore(e) {
+  e.preventDefault();
+  const kind = $id('dateIgKind').value;
+  let start = $id('dateIgStart').value;
+  let end = $id('dateIgEnd').value || null;
+  if (kind === 'range') {
+    if (!end) { toast('Pick both dates for a range', 4000); return; }
+    if (end < start) [start, end] = [end, start]; // normalize order
+  }
+  try {
+    await api('/api/date-ignores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, start, end }),
+    });
+    $id('dateIgStart').value = '';
+    $id('dateIgEnd').value = '';
+    toast('Date ignore added');
+    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  } catch (err) {
+    toast('Could not add date ignore: ' + err.message, 5000);
+  }
+}
+
+async function deleteDateIgnore(id) {
+  try {
+    await api('/api/date-ignores/' + id, { method: 'DELETE' });
+    toast('Date ignore deleted');
+    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  } catch (err) {
+    toast('Delete failed: ' + err.message, 5000);
+  }
 }
 
 async function addIgnoreRule(e) {

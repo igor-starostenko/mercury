@@ -20,7 +20,14 @@ from . import rules
 # excluded from every aggregate below. It stays visible in
 # /api/transactions and /api/overrides, flagged ignored=true — that is
 # what ignoring means for transfers between accounts and the like.
-NOT_IGNORED = "COALESCE(category, '') <> 'Ignored'"
+#
+# Date-level ignore: the date_ignores table (date_ignores.py) marks rows
+# by date range in the view's date_ignored column — same treatment:
+# excluded from every aggregate, still visible, flagged ignored. A month
+# or year whose rows are all ignored has no aggregate row at all, so it
+# drops out of charts, period lists and year cards.
+NOT_IGNORED = ("COALESCE(category, '') <> 'Ignored' "
+               "AND NOT COALESCE(date_ignored, false)")
 
 
 def monthly_spend(con: duckdb.DuckDBPyConnection,
@@ -397,7 +404,8 @@ def override_rows(con: duckdb.DuckDBPyConnection,
                v.override_source,
                (t.category IS NULL OR t.category = ''
                 OR t.category = 'Uncategorized') AS missing_csv,
-               (COALESCE(v.category, '') = 'Ignored') AS ignored
+               (COALESCE(v.category, '') = 'Ignored'
+                OR COALESCE(v.date_ignored, false)) AS ignored
         FROM effective_transactions AS v
         JOIN transactions AS t ON t.id = v.id
         WHERE {where_sql}
@@ -491,7 +499,8 @@ def transactions(con: duckdb.DuckDBPyConnection,
         SELECT v.id, v.source, v.account, CAST(v.txn_date AS VARCHAR),
                v.amount, v.description, v.category, t.category,
                v.override_source,
-               (COALESCE(v.category, '') = 'Ignored') AS ignored
+               (COALESCE(v.category, '') = 'Ignored'
+                OR COALESCE(v.date_ignored, false)) AS ignored
         FROM effective_transactions AS v
         JOIN transactions AS t ON t.id = v.id
         {("WHERE " + " AND ".join(conds)) if conds else ""}
