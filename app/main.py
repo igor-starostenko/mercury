@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -20,7 +21,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ingest, analytics, llm, rules, date_ignores
+from . import ingest, analytics, llm, rules, date_ignores, imports
 
 DB_PATH = ingest.DB_PATH
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -50,6 +51,11 @@ async def lifespan(_: FastAPI):
         # Date ignores must exist before the view: the view's
         # date_ignored column references the table.
         con.execute(date_ignores.CREATE_DATE_IGNORES_SQL)
+        # Import tracking must exist before the view is (re)created: the
+        # view maps every row's display account to its import's current
+        # label (csv_imports.account) for the Manage Imports rename.
+        con.execute(imports.CREATE_IMPORTS_SQL)
+        imports.ensure_import_column(con)
         con.execute(ingest.CREATE_EFFECTIVE_VIEW_SQL)
         # One-time migration: move pre-override categories (rule/LLM/
         # manual) out of the imported rows into category_overrides.
@@ -63,6 +69,13 @@ async def lifespan(_: FastAPI):
         if attributed:
             print(f"  backfilled  : attributed {attributed} legacy overrides "
                   f"to 'llm'")
+        # One-time: pre-tracking rows (imported before csv_imports existed)
+        # are grouped into synthetic imports, so every row belongs to one
+        # entry in Manage Imports (labelable and deletable as a unit).
+        legacy = imports.backfill_imports(con)
+        if legacy:
+            print(f"  backfilled  : created {legacy} import records "
+                  f"for legacy rows")
     finally:
         con.close()
     yield
@@ -122,7 +135,14 @@ async def upload(files: list[UploadFile] = File(...),
                      "needs_source": res.needs_source, "note": res.note,
                      "banks": ingest.KNOWN_BANKS if res.needs_source else None}
             if res.error is None:
-                _, new = ingest.merge_txns(con, res.txns)
+                # Record which file these rows came from (Manage Imports):
+                # the whole import can be re-labeled or deleted later as a
+                # unit. Re-uploads of a known file find the existing
+                # record, so its current label survives (idempotent).
+                imp_id = (
+                    imports.resolve_import(con, name, res.txns[0].account)
+                    if res.txns else None)
+                _, new = ingest.merge_txns(con, res.txns, imp_id)
                 entry["new"] = new
             report.append(entry)
         total = con.execute(
@@ -219,6 +239,86 @@ def accounts():
     con = get_con()
     try:
         return analytics.accounts(con)
+    finally:
+        con.close()
+
+
+# ---------------------------------------------------------------------------
+# Manage Imports: re-label or delete a CSV import as a unit
+# ---------------------------------------------------------------------------
+
+class ImportAccountBody(BaseModel):
+    account: str
+
+
+@app.get("/api/imports")
+def list_imports():
+    """All CSV imports: each uploaded file (or a synthetic "earlier
+    import" group for DBs predating tracking), with its current account
+    label, row count, and date span. Backs the Manage Imports panel."""
+    con = get_con()
+    try:
+        rows = imports.list_imports(con)
+        return {"imports": rows,
+                "total": sum(r["n"] for r in rows)}
+    finally:
+        con.close()
+
+
+@app.post("/api/imports/{import_id}/account")
+def rename_import_account(import_id: int, body: ImportAccountBody):
+    """Re-label an import's account for all of its rows (e.g. a second
+    checking account at the same bank). The stored rows are never
+    rewritten — the label lives on the import record and the effective
+    view maps it in at read time, so re-uploading the same file still
+    dedupes under the current name."""
+    acct = (body.account or "").strip()
+    if not acct:
+        raise HTTPException(status_code=400, detail="account name is empty")
+    if len(acct) > 100:
+        raise HTTPException(
+            status_code=400, detail="account name too long (max 100)")
+    con = get_con()
+    try:
+        if imports.rename_import(con, import_id, acct) is None:
+            raise HTTPException(status_code=404, detail="no such import")
+        con.commit()
+        return {"id": import_id, "account": acct}
+    finally:
+        con.close()
+
+
+@app.delete("/api/imports/{import_id}")
+def delete_import(import_id: int, source: str | None = None):
+    """Delete an import: every row that came from this file — only its
+    rows, plus those rows' per-transaction overrides and soft-delete
+    tombstones. Category rules, date-ignores, and every other import are
+    untouched. The record itself goes once it has no rows left.
+    `source` scopes the delete to one bank's rows of a synthetic legacy
+    import (those group rows from several sources)."""
+    con = get_con()
+    try:
+        if not con.execute(
+                "SELECT COUNT(*) FROM csv_imports WHERE id = ?",
+                [import_id]).fetchone()[0]:
+            raise HTTPException(status_code=404, detail="no such import")
+        last_err: Exception | None = None
+        for attempt in range(3):
+            try:
+                counts = imports.delete_import(con, import_id, source)
+                con.commit()
+                return {"deleted": import_id, **counts}
+            except duckdb.TransactionException as e:
+                # A concurrent writer (e.g. a double-submit) touched the same
+                # rows. The failed statement already aborts the transaction;
+                # roll back defensively, then retry — the operation converges.
+                last_err = e
+                try:
+                    con.rollback()
+                except duckdb.TransactionException:
+                    pass
+                time.sleep(0.1 * (attempt + 1))
+        raise HTTPException(status_code=503, detail="delete conflicted with a concurrent write; try again")
     finally:
         con.close()
 

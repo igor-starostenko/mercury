@@ -24,13 +24,29 @@ function renderChrome(active) {
         <a href="/month" class="${active === 'month' ? 'active' : ''}">Month</a>
       </nav>
       <div class="header-actions">
-        <button onclick="pickFiles()">Import CSV files</button>
-        <button onclick="pickFolder()">Import folder</button>
+        <button class="primary" onclick="openImports()">Manage Imports</button>
         <input type="file" id="filePick" accept=".csv,.txt" multiple hidden onchange="uploadFiles(this.files)">
         <input type="file" id="folderPick" webkitdirectory hidden onchange="uploadFiles(this.files)">
       </div>
     </header>`;
   $id('modal-root').innerHTML = `
+    <div class="modal-backdrop" id="importsModal" onclick="if(event.target===this)closeImports()">
+      <div class="modal" style="min-width:660px">
+        <h2>Manage imports</h2>
+        <div class="imports-tools">
+          <button class="primary" onclick="pickFiles()">Import CSV files</button>
+          <button onclick="pickFolder()">Import folder</button>
+          <span class="hint">Each CSV becomes one import below — rename its
+          account label (e.g. a second checking at the same bank) or delete
+          it with all of its transactions. Rules are never touched.</span>
+        </div>
+        <div id="importsList" style="margin-top:14px"></div>
+        <div class="modal-foot">
+          <span id="importsTotals" class="hint"></span>
+          <button onclick="closeImports()">Close</button>
+        </div>
+      </div>
+    </div>
     <div class="modal-backdrop" id="uploadModal" onclick="if(event.target===this)closeUpload()">
       <div class="modal">
         <h2>Import summary</h2>
@@ -88,6 +104,7 @@ async function uploadFiles(list) {
     toast('Import failed: ' + e.message, 8000);
   }
   if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  if (_importsOpen) setTimeout(refreshImports, 500);
 }
 
 function showUpload(res) {
@@ -164,12 +181,149 @@ async function importWithBanks() {
     toast('Import failed: ' + e.message, 8000);
   }
   if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  if (_importsOpen) setTimeout(refreshImports, 500);
 }
 function closeUpload() {
   const m = $id('uploadModal');
   if (m) m.style.display = 'none';
 }
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeUpload(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeUpload(); closeImports(); } });
+
+/* ------------------------------------------------------------ manage imports */
+/* Each uploaded CSV is one import (csv_imports). Its account label is
+ * editable — a retroactive re-label of ALL of its rows in every report,
+ * so two accounts at the same bank can finally be told apart — and the
+ * import can be deleted with all of its transactions (rules untouched).
+ * _importsData is aligned with the table rows; buttons carry data-row. */
+let _importsOpen = false;
+let _importsData = [];
+
+async function openImports() {
+  _importsOpen = true;
+  const m = $id('importsModal');
+  if (m) m.style.display = 'flex';
+  await refreshImports();
+}
+
+function closeImports() {
+  _importsOpen = false;
+  const m = $id('importsModal');
+  if (m) m.style.display = 'none';
+}
+
+async function refreshImports() {
+  const wrap = $id('importsList');
+  if (!wrap) return;
+  wrap.innerHTML = '<p class="empty">Loading imports…</p>';
+  let d;
+  try { d = await api('/api/imports'); }
+  catch (e) { wrap.innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; return; }
+  _importsData = d.imports || [];
+  if (!_importsData.length) {
+    wrap.innerHTML = '<p class="empty">No imports yet — pick CSV files or a '
+      + 'folder above.</p>';
+    $id('importsTotals').textContent = '';
+    return;
+  }
+  wrap.innerHTML = `
+    <table class="imports-table">
+      <thead><tr>
+        <th>File</th><th>Bank</th><th>Account</th>
+        <th class="num">Txns</th><th>Imported</th>
+        <th class="num" title="Sum of the amounts of this import's transactions">Net</th>
+        <th style="width:64px"></th>
+      </tr></thead>
+      <tbody>${_importsData.map((im, i) => importsRowHTML(im, i)).join('')}</tbody>
+    </table>`;
+  $id('importsTotals').textContent =
+    `${_importsData.length} import${_importsData.length === 1 ? '' : 's'} · ${d.total} transactions`;
+}
+
+function importsRowHTML(im, i) {
+  const file = im.file
+    ? `<span class="imp-file" title="${esc(im.file)}">${esc(im.file)}</span>`
+    : '<span class="imp-legacy" title="Imported before per-file tracking — '
+      + 'grouped by bank and account">earlier import</span>';
+  const span = im.first_date && im.last_date
+    ? ` title="${esc(im.first_date)} → ${esc(im.last_date)}"` : '';
+  return `<tr>
+    <td>${file}</td>
+    <td>${esc(im.source)}</td>
+    <td><span class="imp-acct" data-row="${i}">${esc(im.account)}</span></td>
+    <td class="num">${im.n}</td>
+    <td${span}>${im.imported_at ? esc(String(im.imported_at).slice(0, 10)) : '—'}</td>
+    <td class="num ${im.net < 0 ? 'neg' : im.net > 0 ? 'pos' : ''}">${fmtMoney(im.net)}</td>
+    <td class="num" style="white-space:nowrap">
+      <button class="txn-del" data-row="${i}" title="Rename this import's account label" onclick="startImportRename(this)">✎</button>
+      <button class="txn-del" data-row="${i}" title="Delete this import and all of its transactions" onclick="deleteImportRow(this)">✕</button>
+    </td>
+  </tr>`;
+}
+
+function startImportRename(btn) {
+  const i = Number(btn.dataset.row);
+  const im = _importsData[i];
+  const cell = btn && btn.closest('tr') && btn.closest('tr').querySelector('.imp-acct');
+  if (!im || !cell) return;
+  cell.innerHTML = `
+    <input class="imp-rename" maxlength="100" value="${esc(im.account)}"
+           placeholder="Account name" aria-label="Account name">
+    <button class="imp-save" title="Save new name">Save</button>
+    <button class="imp-cancel" title="Cancel">Cancel</button>`;
+  const inp = cell.querySelector('input');
+  inp.focus(); inp.select();
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') saveImportRename(i, cell);
+    else if (e.key === 'Escape') refreshImports();
+  });
+  cell.querySelector('.imp-save').onclick = () => saveImportRename(i, cell);
+  cell.querySelector('.imp-cancel').onclick = () => refreshImports();
+}
+
+async function saveImportRename(i, cell) {
+  const im = _importsData[i];
+  const inp = cell && cell.querySelector('input');
+  const acct = inp ? inp.value.trim() : '';
+  if (!acct) { toast('Account name cannot be empty', 4000); return; }
+  if (acct === im.account) { refreshImports(); return; }
+  try {
+    await api('/api/imports/' + im.id + '/account', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account: acct }),
+    });
+    toast(`Renamed to “${acct}” — ${im.n} transaction${im.n === 1 ? '' : 's'} re-labeled`);
+    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  } catch (e) {
+    toast('Rename failed: ' + e.message, 5000);
+  }
+  await refreshImports();
+}
+
+async function deleteImportRow(btn) {
+  const i = Number(btn.dataset.row);
+  const im = _importsData[i];
+  if (!im) return;
+  const label = im.file || 'earlier import';
+  if (!confirm(
+    `Delete ${label} and its ${im.n} transaction${im.n === 1 ? '' : 's'}?\n\n` +
+    `Only the transactions from this import are removed — category rules and ` +
+    `every other import stay untouched. This cannot be undone.`)) return;
+  const tr = btn.closest('tr');
+  if (tr) tr.style.opacity = '.35';
+  try {
+    const r = await api('/api/imports/' + im.id +
+      (im.source ? '?source=' + encodeURIComponent(im.source) : ''),
+      { method: 'DELETE' });
+    toast(`Import deleted — ${r.rows} transaction${r.rows === 1 ? '' : 's'} removed, rules untouched`);
+    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  } catch (e) {
+    toast('Delete failed: ' + e.message, 5000);
+    if (tr) tr.style.opacity = '';
+    return;
+  }
+  await refreshImports();
+}
 
 /* ------------------------------------------------------------------- classify */
 async function runClassify() {
