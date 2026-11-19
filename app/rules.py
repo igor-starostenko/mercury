@@ -231,6 +231,35 @@ def create_rule(con: duckdb.DuckDBPyConnection, pattern: str,
     return Rule(new_id, pattern, category, True, new_pos, source, account)
 
 
+def update_rule_category(con: duckdb.DuckDBPyConnection, rule_id: int,
+                         category: str) -> Rule | None:
+    """Change the category an existing rule assigns.
+
+    Only the category moves — the pattern, scope, and priority (position)
+    are untouched, so the rule keeps matching the same rows and still
+    wins/loses the same precedence battles; every report the category
+    feeds reshapes at read time, like any other rule change. The new
+    category may be the reserved ``Ignored`` (the rule moves between the
+    rules and Ignore panels in the UI). Returns None if no rule has
+    ``rule_id`` (-> 404 upstream); ValueError on a bad category (-> 400).
+    """
+    ensure_table(con)
+    category = (category or "").strip()
+    if not category:
+        raise ValueError("category must not be empty")
+    if len(category) > MAX_CATEGORY_LEN:
+        raise ValueError(f"category too long (max {MAX_CATEGORY_LEN} chars)")
+    cur = con.execute(
+        "UPDATE category_rules SET category = ? WHERE id = ?",
+        [category, rule_id])
+    if (cur.rowcount or 0) == 0:
+        return None
+    for r in load_rules(con, enabled_only=False):
+        if r.id == rule_id:
+            return r
+    return None
+
+
 def delete_rule(con: duckdb.DuckDBPyConnection, rule_id: int) -> bool:
     """True if a row was deleted."""
     ensure_table(con)

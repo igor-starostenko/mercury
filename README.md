@@ -112,7 +112,7 @@ in the Manage Imports panel:
 - `POST /api/categorize` — assign a standard category manually:
   `{"ids": [1, 2], "category": "Groceries"}`. `GET
   /api/standard-categories` returns the full vocabulary — the standard
-  categories (including `Donations` and `Education`) plus the reserved
+  categories (including `Beauty`, `Donations` and `Education`) plus the reserved
   `Ignored` marker. The LLM classifier is prompted with everything
   except `Ignored`: ignoring is a human judgment, not a merchant guess.
 
@@ -131,6 +131,13 @@ the UI rows in the rules and Ignore panels can be dragged to reorder —
 rows work across both panels, since the panels share one global
 priority list — and the order is persisted (`POST
 /api/rules/reorder`) and takes effect immediately.
+
+A rule's category can be changed after the fact: every row in the rules
+and Ignore panels carries a category dropdown (`PUT /api/rules/{id}`).
+Only the target category moves — the pattern, scope, and priority are
+kept — so the rule keeps matching the same rows from the same slot.
+Picking `Ignored` (or moving a rule away from it) moves the rule
+between the two panels.
 
 A rule can be **scoped** to one bank (`source`) and/or one account:
 create it with `source` or `account` set and it only matches rows
@@ -182,6 +189,11 @@ modified.
   (`source`/`account` optional — omit them for "All"; 400 on
   empty/too-long fields or a duplicate pattern within the same scope).
   Appends to the end of the priority list.
+- `PUT /api/rules/{id}` — change the category a rule assigns:
+  `{"category": "Beauty"}` (400 on an empty/too-long category, 404 on
+  an unknown rule id). Pattern, scope, and priority are untouched and
+  the new category takes effect immediately, like every other rule
+  change; setting `Ignored` moves the rule to the Ignore box.
 - `POST /api/rules/reorder` — persist a new priority order:
   `{"ordered_ids": [2, 1, 3]}` (every rule id exactly once, highest
   priority first; 400 with "refresh and retry" on stale client state).

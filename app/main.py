@@ -493,6 +493,10 @@ class RuleBody(BaseModel):
     account: str | None = None
 
 
+class RuleUpdateBody(BaseModel):
+    category: str
+
+
 class RuleReorderBody(BaseModel):
     # Every rule id exactly once, highest priority first.
     ordered_ids: list[int]
@@ -536,6 +540,29 @@ def create_rule(body: RuleBody):
         return {"id": r.id, "pattern": r.pattern,
                 "category": r.category, "enabled": True,
                 "position": r.position,
+                "source": r.source, "account": r.account}
+    finally:
+        con.close()
+
+
+@app.put("/api/rules/{rule_id}")
+def update_rule_category(rule_id: int, body: RuleUpdateBody):
+    """Change the category an existing rule assigns.
+
+    Pattern, scope, and priority are untouched — the rule keeps matching
+    the same rows, and the new category takes effect at read time like
+    every other rule change. The category may be the reserved
+    "Ignored" (moves the rule between the rules and Ignore panels)."""
+    con = get_con()
+    try:
+        try:
+            r = rules.update_rule_category(con, rule_id, body.category)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if r is None:
+            raise HTTPException(status_code=404, detail="rule not found")
+        return {"id": r.id, "pattern": r.pattern, "category": r.category,
+                "enabled": r.enabled, "position": r.position,
                 "source": r.source, "account": r.account}
     finally:
         con.close()
