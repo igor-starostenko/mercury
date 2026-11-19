@@ -298,7 +298,43 @@ function makeFlowChart(canvas, cfg) {
             const seen = new Set();
             return items.filter(it => seen.has(it.text) ? false : (seen.add(it.text), true));
           } } },
-      tooltip: { callbacks: { label: c => ' ' + c.dataset.label + ': ' + fmtMoney(c.raw) } },
+      tooltip: {
+        // Index mode lists EVERY dataset at the hovered bucket. Two
+        // cleanups: drop $0.00 rows, and in stacked mode fold a category
+        // present in BOTH stacks (one same-label dataset per stack) into
+        // a single row — keep the first occurrence, stash the other side
+        // on it for the label callback (same one-entry-per-name policy
+        // as the legend's generateLabels above).
+        // NOTE: this vendored Chart.js build passes filter(item, index,
+        // dataPoints, chart) — the documented (item, dataPoints, index)
+        // order is NOT what _createItems sends, so take the array arg
+        // from whichever slot holds it.
+        filter: (item, second, third) => {
+          const dataPoints = Array.isArray(second) ? second
+            : Array.isArray(third) ? third : [];
+          if (Number(item.raw) === 0) return false;
+          const keep = dataPoints.findIndex(d =>
+            d.dataset.label === item.dataset.label && Number(d.raw) !== 0);
+          if (keep === dataPoints.indexOf(item)) return true;
+          const k = dataPoints[keep];
+          if (k) (k._sides = k._sides || {})[item.dataset.stack] = Number(item.raw);
+          return false;
+        },
+        callbacks: {
+          label: c => {
+            const own = Number(c.raw);
+            const otherSide = c.dataset.stack === 'spend' ? 'income' : 'spend';
+            const stashed = c._sides && c._sides[otherSide];
+            if (stashed == null) return ' ' + c.dataset.label + ': ' + fmtMoney(own);
+            const spend = c.dataset.stack === 'spend' ? own : stashed;
+            const income = c.dataset.stack === 'income' ? own : stashed;
+            return [
+              ' ' + c.dataset.label + ': ' + fmtMoney(spend - income),
+              '   spent ' + fmtMoney(spend) + ' · income ' + fmtMoney(income),
+            ];
+          },
+        },
+      },
     },
     scales: {
       x: { ticks: { color: '#8a90a2' }, grid: { display: false } },
