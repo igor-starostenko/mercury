@@ -247,8 +247,13 @@ category** — spend and income each in their own stack, one segment per
 category — so per-category trends are visible across months and weeks.
 The **Totals** toggle in each chart's header switches to the grouped
 Spend vs Income bars. The choice is remembered per chart in the browser
-(localStorage); more than 8 active categories fold the smallest into a
-single "All other" segment, and grand totals appear in the tooltip footer.
+(localStorage). The top 8 are selected **per bar**: each bucket's
+(month's, or week's) top 8 by its own spend + income are spelled out, so a
+category that spikes in a single bucket (e.g. a month of tuition) is named
+in that bar's legend and tooltip instead of being hidden in "All other" by
+the all-range totals. The legend lists the union of every bucket's top 8
+(in all-range volume order); all remaining categories fold into one
+"All other" segment, and grand totals appear in the tooltip footer.
 API side: `GET /api/monthly` adds `flow_by_category`
 (`[{bucket, category, spend, income}]` per month, plus income), and
 `GET /api/weekly?month=YYYY-MM&by_category=true` returns

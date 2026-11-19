@@ -192,8 +192,10 @@ async function runClassify() {
  * The choice is persisted in localStorage per chart (modeKey), so it
  * survives data re-renders and page reloads.
  */
-const FLOW_MAX_CATEGORIES = 8; // top N categories as segments; the tail
-                               // merges into one "All other" segment
+const FLOW_MAX_CATEGORIES = 8; // per-bucket top N; a category is spelled
+                               // out if it makes the top N of ANY bucket
+                               // in the range, the rest folds into one
+                               // "All other" segment
 const ALL_OTHER = 'All other';
 
 function flowMode(key) {
@@ -248,21 +250,34 @@ function withAlpha(color, a) {
   return color; // hashed hsl fallback: no easy alpha conversion
 }
 
-/* Stacked-view plan: order categories by total volume across ALL
- * buckets (deterministic, so the stack never reorders between buckets)
- * and fold the tail beyond FLOW_MAX_CATEGORIES into "All other". */
+/* Stacked-view plan: the top FLOW_MAX_CATEGORIES are selected PER BUCKET
+ * by each bucket's own spend + income, and `keep` is the UNION across all
+ * buckets — so a category that spikes in one month (e.g. tuition) is
+ * spelled out in that month's bar instead of being buried in "All other"
+ * by the all-range totals. `keep` is ordered by all-range total volume
+ * (name as tiebreak), so the dataset/legend order is deterministic and
+ * the stack never reorders between renders. Everything outside the union
+ * folds into "All other". */
 function flowStackPlan(byCategory) {
-  const agg = new Map();
+  const agg = new Map();      // category -> all-range volume (legend order)
+  const perBucket = new Map(); // key -> Map(category -> bucket volume)
   for (const r of byCategory || []) {
-    const a = agg.get(r.category) || { spend: 0, income: 0 };
-    a.spend += r.spend || 0;
-    a.income += r.income || 0;
-    agg.set(r.category, a);
+    const v = (r.spend || 0) + (r.income || 0);
+    agg.set(r.category, (agg.get(r.category) || 0) + v);
+    if (!perBucket.has(r.key)) perBucket.set(r.key, new Map());
+    const b = perBucket.get(r.key);
+    b.set(r.category, (b.get(r.category) || 0) + v);
   }
-  const all = [...agg.entries()].sort((x, y) =>
-    (y[1].spend + y[1].income) - (x[1].spend + x[1].income));
-  const keep = all.slice(0, FLOW_MAX_CATEGORIES).map(e => e[0]);
-  const merged = all.slice(FLOW_MAX_CATEGORIES).map(e => e[0]);
+  const keepSet = new Set();
+  for (const b of perBucket.values()) {
+    [...b.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))
+      .slice(0, FLOW_MAX_CATEGORIES)
+      .forEach(e => keepSet.add(e[0]));
+  }
+  const ranked = [...agg.entries()].sort((x, y) =>
+    y[1] - x[1] || x[0].localeCompare(y[0]));
+  const keep = ranked.filter(e => keepSet.has(e[0])).map(e => e[0]);
+  const merged = ranked.filter(e => !keepSet.has(e[0])).map(e => e[0]);
   return { keep, merged };
 }
 
