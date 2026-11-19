@@ -477,6 +477,7 @@ CREATE_EFFECTIVE_VIEW_SQL = """
              WHEN x.rule_category IS NOT NULL THEN 'rule'
              ELSE x.override_source
            END AS override_source,
+           x.date_ignored,
            x.raw_category, x.currency, x.key, x.classified
     FROM (
       SELECT t.*, o.category AS override_category, o.source AS override_source,
@@ -491,7 +492,21 @@ CREATE_EFFECTIVE_VIEW_SQL = """
                         lower(regexp_replace(t.description, '\\s+', ' ', 'g')),
                         lower(regexp_replace(r.pattern, '\\s+', ' ', 'g'))
                       ) > 0
-              ORDER BY r.position, r.id LIMIT 1) AS rule_category
+              ORDER BY r.position, r.id LIMIT 1) AS rule_category,
+             -- Date ignores (date_ignores table): true when any rule
+             -- covers this txn_date. Pure read-time flag like
+             -- rule_category — independent of the category chain, so
+             -- editing a row's category never changes it. Boundaries:
+             -- before -> txn_date < start; after -> txn_date > start
+             -- (the boundary date itself is kept); range -> both ends
+             -- inclusive.
+             EXISTS (
+                SELECT 1 FROM date_ignores AS di
+                WHERE (di.kind = 'before' AND t.txn_date <  di.start_date)
+                   OR (di.kind = 'after'  AND t.txn_date >  di.start_date)
+                   OR (di.kind = 'range'  AND t.txn_date >= di.start_date
+                                           AND t.txn_date <= di.end_date)
+             ) AS date_ignored
       FROM transactions AS t
       LEFT JOIN category_overrides AS o ON o.txn_id = t.id
       WHERE t.id NOT IN (SELECT txn_id FROM deleted_transactions)

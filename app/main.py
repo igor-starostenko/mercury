@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ingest, analytics, llm, rules
+from . import ingest, analytics, llm, rules, date_ignores
 
 DB_PATH = ingest.DB_PATH
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -47,6 +47,9 @@ async def lifespan(_: FastAPI):
         con.execute(ingest.CREATE_DELETED_SQL)
         con.execute(rules.CREATE_RULES_SQL)
         rules.ensure_rule_position(con)
+        # Date ignores must exist before the view: the view's
+        # date_ignored column references the table.
+        con.execute(date_ignores.CREATE_DATE_IGNORES_SQL)
         con.execute(ingest.CREATE_EFFECTIVE_VIEW_SQL)
         # One-time migration: move pre-override categories (rule/LLM/
         # manual) out of the imported rows into category_overrides.
@@ -451,6 +454,68 @@ def delete_rule(rule_id: int):
         if not rules.delete_rule(con, rule_id):
             raise HTTPException(status_code=404, detail="rule not found")
         return {"deleted": rule_id}
+    finally:
+        con.close()
+
+
+# ---------------------------------------------------------------------------
+# Date-based ignores (before / range / after) — read-time layer, same
+# treatment as the per-row 'Ignored' category: excluded from every
+# aggregate, still listed, flagged ignored.
+# ---------------------------------------------------------------------------
+class DateIgnoreBody(BaseModel):
+    # 'before' -> ignore txn_date < start (start kept)
+    # 'after'  -> ignore txn_date > start (start kept)
+    # 'range'  -> ignore start <= txn_date <= end (both ends inclusive)
+    kind: str
+    start: str
+    end: str | None = None
+
+
+@app.get("/api/date-ignores")
+def list_date_ignores():
+    """Date ignore rules, with live per-rule counts of the rows they
+    exclude (n, and net signed amount) — computed on the same effective
+    view every report reads."""
+    con = get_con()
+    try:
+        items = date_ignores.load(con)
+        stats = date_ignores.ignored_counts(con, items)
+        return {
+            "ignores": [{
+                "id": r.id, "kind": r.kind, "start": r.start, "end": r.end,
+                "n": stats[r.id][0],
+                "net": round(stats[r.id][1], 2),
+            } for r in items],
+        }
+    finally:
+        con.close()
+
+
+@app.post("/api/date-ignores")
+def create_date_ignore(body: DateIgnoreBody):
+    """Add a date ignore. 400 on an invalid kind/date, an inverted
+    range, or an exact duplicate."""
+    con = get_con()
+    try:
+        try:
+            r = date_ignores.create(con, body.kind, body.start, body.end)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"id": r.id, "kind": r.kind, "start": r.start,
+                "end": r.end}
+    finally:
+        con.close()
+
+
+@app.delete("/api/date-ignores/{ignore_id}")
+def delete_date_ignore(ignore_id: int):
+    con = get_con()
+    try:
+        if not date_ignores.delete(con, ignore_id):
+            raise HTTPException(status_code=404,
+                                detail="date ignore not found")
+        return {"deleted": ignore_id}
     finally:
         con.close()
 

@@ -183,10 +183,11 @@ $id('ovSearch').addEventListener('input', () => {
 });
 
 async function renderAll() {
-  const [summary, cats, ruleData] = await Promise.all([
+  const [summary, cats, ruleData, dateIg] = await Promise.all([
     api('/api/summary'),
     api('/api/categories'),
     api('/api/rules'),
+    api('/api/date-ignores'),
   ]);
 
   $id('emptyHint').style.display = summary.n_transactions ? 'none' : 'block';
@@ -198,7 +199,7 @@ async function renderAll() {
 
   // Custom category rules (keyword -> category, applied at read time).
   renderRules(ruleData);
-  renderIgnoreRules(ruleData);
+  renderIgnoreRules(ruleData, dateIg);
 
   // Merged categorization list: overrides + still-uncategorized rows.
   // Chip/search/sort state is kept; the server filters + sorts the full

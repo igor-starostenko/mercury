@@ -78,13 +78,15 @@ let _flowCfg = null; // last chart config, so the view toggle re-draws
                      // without refetching
 
 async function renderAll() {
-  const [summary, monthly, years, cats, accounts, ruleData] = await Promise.all([
+  const [summary, monthly, years, cats, accounts, ruleData, dateIg] =
+    await Promise.all([
     api('/api/summary'),
     api('/api/monthly'),
     api('/api/year-totals'),
     api('/api/categories'),
     api('/api/accounts'),
     api('/api/rules'),
+    api('/api/date-ignores'),
   ]);
 
   $id('emptyHint').style.display = summary.n_transactions ? 'none' : 'block';
@@ -126,7 +128,7 @@ async function renderAll() {
 
   // Custom category rules (keyword -> category bulk override).
   renderRules(ruleData);
-  renderIgnoreRules(ruleData);
+  renderIgnoreRules(ruleData, dateIg);
 
   // Accounts.
   $id('accounts').innerHTML = accounts.length
