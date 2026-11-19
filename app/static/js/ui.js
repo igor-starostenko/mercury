@@ -936,6 +936,67 @@ let _rulesOrder = [];        // global rule ids, highest priority first
 let _rulesDataCache = null;  // last ruleData payload, for re-render on failure
 let _dragRuleId = null;      // rule being dragged (dataTransfer is opaque
                              // during dragover, so track it ourselves)
+let _accountsCache = [];     // last /api/accounts rows {source, account,
+                             // n, net} — backs the rule scope dropdowns
+
+/* --------------------------------------------------- rule scope (source) */
+/* A rule may be restricted to one bank (source) and/or one account;
+   NULL = All, so unscoped rules behave exactly as before. The options
+   come from the live account list (the same data the Accounts table
+   shows), and the account scope targets the account's CURRENT display
+   label — Manage Imports renames re-scope rows read-time. */
+
+function _scopeSources(accounts) {
+  return [...new Set((accounts || []).map(a => a.source))].sort();
+}
+
+function _scopeAccounts(accounts, source) {
+  const rows = (accounts || []).filter(a => !source || a.source === source);
+  return [...new Set(rows.map(a => a.account))].sort();
+}
+
+function _scopeOptions(values, allLabel) {
+  return `<option value="">${allLabel}</option>` +
+    values.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+}
+
+function _scopeForm(prefix) {
+  return `
+    <select id="${prefix}ScopeSource" aria-label="Source scope"
+            onchange="scopeSourceChanged('${prefix}')">
+      ${_scopeOptions(_scopeSources(_accountsCache), 'All sources')}
+    </select>
+    <select id="${prefix}ScopeAccount" aria-label="Account scope">
+      ${_scopeOptions(_scopeAccounts(_accountsCache, ''), 'All accounts')}
+    </select>`;
+}
+
+function scopeSourceChanged(prefix) {
+  const srcId = prefix + 'ScopeSource';
+  const acctId = prefix + 'ScopeAccount';
+  $id(acctId).innerHTML = _scopeOptions(
+    _scopeAccounts(_accountsCache, $id(srcId).value), 'All accounts');
+}
+
+function _scopeBody() {
+  const source = $id('ruleScopeSource').value || null;
+  const account = $id('ruleScopeAccount').value || null;
+  return { source, account };
+}
+
+function _ignoreScopeBody() {
+  return { source: $id('ignoreScopeSource').value || null,
+           account: $id('ignoreScopeAccount').value || null };
+}
+
+function _scopeLabel(r) {
+  const parts = [];
+  if (r.source) parts.push(r.source);
+  if (r.account) parts.push(r.account);
+  return parts.length
+    ? parts.map(esc).join(' · ')
+    : '<span style="color:var(--muted)">All</span>';
+}
 
 function _rulesRefreshData(rulesData) {
   _rulesOrder = rulesData.rules.map(r => r.id);
@@ -1021,15 +1082,18 @@ async function reorderRules(orderedIds) {
   }
 }
 
-function renderRules(data) {
+function renderRules(data, accounts) {
   const el = $id('rulesPanel');
   if (!el) return;
+  if (accounts) _accountsCache = accounts;
   _rulesRefreshData(data);
   const rules = data.rules.filter(r => r.category !== 'Ignored');
   const list = rules.length
     ? '<table><thead><tr>' +
       '<th style="width:30px"></th>' +
-      '<th>Keyword</th><th>→ Category</th><th class="num">Matches</th><th class="num" title="Net of the rows this rule actually categorizes — first match wins, manual categories beat rules. − spend, + income">Net</th><th style="width:40px"></th>' +
+      '<th>Keyword</th>' +
+      '<th title="Where the rule applies — empty means every source and account">Scope</th>' +
+      '<th>→ Category</th><th class="num">Matches</th><th class="num" title="Net of the rows this rule actually categorizes — first match wins, manual categories beat rules. − spend, + income">Net</th><th style="width:40px"></th>' +
       '</tr></thead><tbody>' +
       rules.map(r => `
         <tr class="rule-row" draggable="true" data-rule-id="${r.id}"
@@ -1038,6 +1102,8 @@ function renderRules(data) {
             ondragend="ruleDragEnd(event)">
           <td class="rule-drag" title="Drag to change priority">⠿</td>
           <td class="desc" title="${esc(r.pattern)}">${esc(r.pattern)}</td>
+          <td title="Applies to: ${esc([r.source, r.account].filter(Boolean).join(' · ') || 'all sources and accounts')}"
+              >${_scopeLabel(r)}</td>
           <td><span class="dot" style="background:${CAT_COLORS[r.category] || '#57606f'}"></span>${esc(r.category)}</td>
           <td class="num">${r.matches}</td>
           <td class="num ${r.net < 0 ? 'neg' : r.net > 0 ? 'pos' : ''}">${fmtMoney(r.net)}</td>
@@ -1052,6 +1118,7 @@ function renderRules(data) {
       <select id="ruleCategory" required>
         ${CATS.filter(c => c !== 'Ignored').map(c => `<option>${esc(c)}</option>`).join('')}
       </select>
+      ${_scopeForm('rule')}
       <button type="submit">Add rule</button>
     </form>
     ${list}`;
@@ -1065,16 +1132,19 @@ function renderRules(data) {
 let _dateIgCache = [];  // last /api/date-ignores items, for re-render
                         // paths that don't refetch (e.g. reorder failure)
 
-function renderIgnoreRules(data, dateIgData) {
+function renderIgnoreRules(data, dateIgData, accounts) {
   const el = $id('ignoreRulesPanel');
   if (!el) return;
+  if (accounts) _accountsCache = accounts;
   _rulesRefreshData(data);
   if (dateIgData) _dateIgCache = dateIgData.ignores || [];
   const rules = data.rules.filter(r => r.category === 'Ignored');
   const list = rules.length
     ? '<table><thead><tr>' +
       '<th style="width:30px"></th>' +
-      '<th>Keyword</th><th>Effect</th><th class="num">Matches</th><th class="num" title="Net amount of the rows excluded from all totals by this rule">Net</th><th style="width:40px"></th>' +
+      '<th>Keyword</th>' +
+      '<th title="Where the rule applies — empty means every source and account">Scope</th>' +
+      '<th>Effect</th><th class="num">Matches</th><th class="num" title="Net amount of the rows excluded from all totals by this rule">Net</th><th style="width:40px"></th>' +
       '</tr></thead><tbody>' +
       rules.map(r => `
         <tr class="rule-row" draggable="true" data-rule-id="${r.id}"
@@ -1083,6 +1153,8 @@ function renderIgnoreRules(data, dateIgData) {
             ondragend="ruleDragEnd(event)">
           <td class="rule-drag" title="Drag to change priority">⠿</td>
           <td class="desc" title="${esc(r.pattern)}">${esc(r.pattern)}</td>
+          <td title="Applies to: ${esc([r.source, r.account].filter(Boolean).join(' · ') || 'all sources and accounts')}"
+              >${_scopeLabel(r)}</td>
           <td><span class="badge badge-ignored" title="Matching rows are excluded from all totals but stay visible">⊘ Ignored</span></td>
           <td class="num">${r.matches}</td>
           <td class="num ${r.net < 0 ? 'neg' : r.net > 0 ? 'pos' : ''}">${fmtMoney(r.net)}</td>
@@ -1094,6 +1166,7 @@ function renderIgnoreRules(data, dateIgData) {
     <form class="rule-form" onsubmit="addIgnoreRule(event)">
       <input id="ignorePattern" type="text" maxlength="200" required
              placeholder="Keyword, e.g. 'internal transfer' or 'to savings'">
+      ${_scopeForm('ignore')}
       <button type="submit">Ignore matches</button>
     </form>
     ${list}
@@ -1191,14 +1264,17 @@ async function deleteDateIgnore(id) {
 async function addIgnoreRule(e) {
   e.preventDefault();
   const pattern = $id('ignorePattern').value.trim();
+  const scope = _ignoreScopeBody();
   try {
     await api('/api/rules', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pattern, category: 'Ignored' }),
+      body: JSON.stringify({ pattern, category: 'Ignored', ...scope }),
     });
     $id('ignorePattern').value = '';
-    toast('Ignore rule added');
+    toast('Ignore rule added' + (scope.source || scope.account
+      ? ' (scoped: ' + [scope.source, scope.account].filter(Boolean).join(' · ') + ')'
+      : ''));
     if (window.onDataChanged) setTimeout(onDataChanged, 400);
   } catch (err) {
     toast('Could not add ignore rule: ' + err.message, 5000);
@@ -1209,14 +1285,17 @@ async function addRule(e) {
   e.preventDefault();
   const pattern = $id('rulePattern').value.trim();
   const category = $id('ruleCategory').value;
+  const scope = _scopeBody();
   try {
     await api('/api/rules', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pattern, category }),
+      body: JSON.stringify({ pattern, category, ...scope }),
     });
     $id('rulePattern').value = '';
-    toast('Rule added');
+    toast('Rule added' + (scope.source || scope.account
+      ? ' (scoped: ' + [scope.source, scope.account].filter(Boolean).join(' · ') + ')'
+      : ''));
     if (window.onDataChanged) setTimeout(onDataChanged, 400);
   } catch (err) {
     toast('Could not add rule: ' + err.message, 5000);

@@ -132,6 +132,20 @@ rows work across both panels, since the panels share one global
 priority list — and the order is persisted (`POST
 /api/rules/reorder`) and takes effect immediately.
 
+A rule can be **scoped** to one bank (`source`) and/or one account:
+create it with `source` or `account` set and it only matches rows
+from that bank and/or account — every other row ignores it. An unset
+scope means **All**, so unscoped rules — including everything created
+before scoping existed — behave exactly as before, and the same
+pattern may exist once per scope (a "walmart" → Groceries rule for
+one bank, "walmart" → Dining for another, plus an unscoped fallback
+all coexist). The account scope is the account's *current display
+label*, so a Manage Imports rename moves the rule's coverage along
+with its rows. The rules and Ignore panels show each rule's scope in
+a Scope column ("All" when unscoped), and the add-rule forms offer
+source/account dropdowns (defaulting to All) built from the live
+account list; per-rule match counts and nets honor the scope.
+
 Precedence, in every report: an explicit assignment (manual edit, or a
 legacy `rule` override from before rules became read-time) > first
 matching rule > LLM assignment > CSV import. Re-picking a category on
@@ -164,8 +178,10 @@ modified.
 - `GET /api/rules` — rules in evaluation order, with live per-rule
   match counts.
 - `POST /api/rules` — add a rule: `{"pattern": "walmart",
-  "category": "Groceries"}` (400 on empty/too-long fields or a
-  duplicate pattern). Appends to the end of the priority list.
+  "category": "Groceries", "source": "Chase", "account": "Checking"}`
+  (`source`/`account` optional — omit them for "All"; 400 on
+  empty/too-long fields or a duplicate pattern within the same scope).
+  Appends to the end of the priority list.
 - `POST /api/rules/reorder` — persist a new priority order:
   `{"ordered_ids": [2, 1, 3]}` (every rule id exactly once, highest
   priority first; 400 with "refresh and retry" on stale client state).
