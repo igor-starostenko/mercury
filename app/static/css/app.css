@@ -150,12 +150,23 @@ th.sortable .sort-ind { margin-left: 4px; font-size: 8px; letter-spacing: 0; }
 /* ------------------------------------------------- category table + drill */
 .cat-table tr.drill-row { cursor: pointer; }
 .cat-table td.num.pos { color: var(--income); font-weight: 600; }
+.cat-table td.num.neg { color: var(--spend); font-weight: 600; }
 .cat-table tr.drill-row:hover { background: rgba(79, 140, 255, .06); }
 .chev { display: inline-block; width: 16px; color: var(--muted); transition: transform .15s; font-size: 11px; }
 tr.open .chev { transform: rotate(90deg); color: var(--accent); }
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; vertical-align: baseline; }
 .share-bar { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
 .share-bar i { display: block; height: 100%; border-radius: 3px; }
+/* Bidirectional share bar (category table): left half = spend, right half =
+   net credits, each scaled to its own direction's total. The % label keeps a
+   fixed outer slot on every row so both halves stay the same width. */
+.share-split { display: flex; align-items: center; gap: 3px; }
+.share-side { display: flex; align-items: center; gap: 5px; flex: 1; min-width: 0; }
+.share-side .share-bar { flex: 1; }
+.share-side.neg .share-bar i { margin-left: auto; }
+.share-zero { flex: none; width: 1px; height: 12px; background: var(--border); }
+.share-pct { flex: none; min-width: 34px; font-size: 10px; line-height: 1; color: var(--muted); font-variant-numeric: tabular-nums; }
+.share-side.neg .share-pct { text-align: right; }
 tr.detail-row > td { background: #12151c; padding: 0; }
 .detail-wrap { padding: 10px 14px 14px; }
 .detail-head { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
