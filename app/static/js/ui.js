@@ -686,8 +686,10 @@ async function renderCategoryTable(container, catData, scope) {
           ? `<td class="num neg">${fmtMoney(-net)}</td>`
           : `<td class="num pos">+${fmtMoney(-net)}</td>`;
         // Diverging bar: fill anchored at the zero line, extending outward.
-        // The % label sits in the outer slot of the active side; the inactive
-        // side keeps an empty slot so both halves stay the same width.
+        // The % label ALWAYS sits on the left (neg-side), for both spend and
+        // credit rows, so the left half is never hollow. Spend bars extend
+        // left (red), credit bars extend right (green); the opposite side
+        // keeps an empty slot so both halves stay the same width.
         const shareCell = isSpend
           ? `<td><div class="share-split">
               <div class="share-side neg"><span class="share-pct">${pct}%</span><div class="share-bar"><i style="width:${pct}%;background:var(--spend)"></i></div></div>
@@ -695,9 +697,9 @@ async function renderCategoryTable(container, catData, scope) {
               <div class="share-side pos"><div class="share-bar"><i style="width:0"></i></div><span class="share-pct"></span></div>
             </div></td>`
           : `<td><div class="share-split">
-              <div class="share-side neg"><div class="share-bar"><i style="width:0"></i></div><span class="share-pct"></span></div>
+              <div class="share-side neg"><span class="share-pct">${pct}%</span><div class="share-bar"><i style="width:0"></i></div></div>
               <div class="share-zero"></div>
-              <div class="share-side pos"><div class="share-bar"><i style="width:${pct}%;background:var(--income)"></i></div><span class="share-pct">${pct}%</span></div>
+              <div class="share-side pos"><div class="share-bar"><i style="width:${pct}%;background:var(--income)"></i></div><span class="share-pct"></span></div>
             </div></td>`;
         return `
         <tr class="drill-row" data-i="${i}" data-cat="${esc(d.category)}">

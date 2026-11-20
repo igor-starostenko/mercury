@@ -59,8 +59,8 @@
         <button class="ov-chip" data-by="rule">Rule</button>
         <button class="ov-chip" data-by="uncategorized">Unknown</button>
         <input type="search" class="txn-search" id="ovSearch"
-               placeholder="Search description… (rule-match preview)"
-               aria-label="Search categorized transactions by description">
+               placeholder="Search all transactions… (rule-match preview)"
+               aria-label="Search all transactions by description">
       </div>
       <div id="overrides"></div>
     </div>
@@ -71,13 +71,20 @@
 
 <script>
 window.onDataChanged = renderAll;
-const OV_SET_BY = { manual: 'you', llm: 'LLM', rule: 'rule', unknown: 'unknown', uncategorized: 'pending' };
-const OV_LIMIT = 1000;
+const OV_SET_BY = { manual: 'you', llm: 'LLM', rule: 'rule', csv: 'bank',
+                    unknown: 'unknown', uncategorized: 'pending' };
+const OV_LIMIT = 1000;        // browse-view window (no search): top 1000 of the filter
+const OV_SEARCH_LIMIT = 100000; // search: pull the FULL matching set — a search that
+                                // silently truncates to 1000 hides real rule matches
 const OV_BASE_HINT = 'missing CSV category or re-categorized · re-pick a category to make it yours';
 /* The chip filter, description search and column sort all run on the
- * SERVER over the full history (SQL filter + sort before LIMIT), so the
- * window below is the top OV_LIMIT rows of whatever is currently
- * filtered — not a filter applied to the first 1000 transactions. */
+ * SERVER over the full history (SQL filter + sort before LIMIT). Browse
+ * (no search) shows the top OV_LIMIT rows of the section's base set; with
+ * a search term active the search scans EVERY transaction — including
+ * rows that only carry the bank's CSV category, which the list doesn't
+ * show by default (they render with the "bank" badge) — and the limit
+ * jumps to OV_SEARCH_LIMIT so every match is visible. The "X of Y shown"
+ * hint below the table is the safety net if a term ever matches more. */
 let ovRows = [];
 let ovTotal = 0;
 let ovPendingTotal = 0;
@@ -88,8 +95,10 @@ let ovSearchTimer = null;
 
 function ovQuery() {
   const st = $id('overrides')._sortState || { key: 'date', dir: 'desc' };
+  const q = (ovSearch || '').trim();
   const p = new URLSearchParams({
-    limit: String(OV_LIMIT), include_uncategorized: 'true',
+    limit: String(q ? OV_SEARCH_LIMIT : OV_LIMIT),
+    include_uncategorized: 'true',
     set_by: ovFilter, sort_by: st.key, sort_dir: st.dir, q: ovSearch,
   });
   return '/api/overrides?' + p.toString();
