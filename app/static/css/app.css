@@ -230,7 +230,9 @@ tr.rule-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 }
 .txn-search:focus { outline: none; border-color: var(--accent); }
 .txn-search::placeholder { color: var(--muted); opacity: .7; }
-.section-head .txn-search { margin-left: auto; }
+/* Month page "All transactions" head: grow the input to fill the free row
+ * space instead of sitting at its 220px min-width (placeholder used to clip). */
+.section-head .txn-search { margin-left: auto; flex: 1 1 260px; }
 .ov-filters .txn-search { flex: 1; min-width: 200px; }
 mark {
   background: rgba(255, 193, 77, .22);
