@@ -388,15 +388,25 @@ def override_rows(con: duckdb.DuckDBPyConnection,
         where: list[str] = []
         params: list[Any] = []
     else:
-        where = ["(v.override_source IS NOT NULL OR (? = 1 AND ("
-                 "t.category IS NULL OR t.category = ''"
+        # Base set: rows with a stored override, rows re-categorized by a
+        # live rule, and (opt-in) rows still missing a category. The
+        # override check is EXISTS, not `override_source IS NOT NULL` —
+        # a legacy override's source column can be NULL, so the resolved
+        # source alone would hide it from the list.
+        where = ["(o2.txn_id IS NOT NULL OR v.override_source = 'rule'"
+                 " OR (? = 1 AND (t.category IS NULL OR t.category = ''"
                  " OR t.category = 'Uncategorized')))"]
         params: list[Any] = [int(include_uncategorized)]
     if set_by in ("manual", "llm", "rule"):
         where.append("v.override_source = ?")
         params.append(set_by)
     elif set_by == "uncategorized":
-        where.append("v.override_source IS NULL")
+        # Truly pending rows: no stored override (a legacy override's
+        # NULL source is NOT "uncategorized" — it has a category), no
+        # live rule, and no CSV category.
+        where.append("v.override_source IS NULL AND o2.txn_id IS NULL"
+                     " AND (t.category IS NULL OR t.category = ''"
+                     " OR t.category = 'Uncategorized')")
     if q_norm:
         # Whitespace-normalized substring, exactly like the UI search
         # and the category-rule matching.
@@ -410,6 +420,7 @@ def override_rows(con: duckdb.DuckDBPyConnection,
         SELECT COUNT(*)
         FROM effective_transactions AS v
         JOIN transactions AS t ON t.id = v.id
+        LEFT JOIN category_overrides AS o2 ON o2.txn_id = v.id
         WHERE {where_sql}
     """, params).fetchone()
 
