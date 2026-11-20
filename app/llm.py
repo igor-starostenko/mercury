@@ -2,17 +2,17 @@
 
 Primary path: call a locally-served OpenAI-compatible chat endpoint
 (works with Ollama, oMLX, LM Studio, llama.cpp server, vLLM, ...). The
-endpoint, model, and optional API key are read from environment
-variables so nothing is hard-wired:
-  MERCURY_LLM_ENDPOINT  (default: Ollama on localhost:11434)
-  MERCURY_LLM_MODEL     (default: llama3.2)
-  MERCURY_LLM_API_KEY   (sent as "Authorization: Bearer ..." when set)
+feature is OFF unless BOTH of these are set in the environment —
+there are no built-in defaults and nothing is guessed:
+  MERCURY_LLM_ENDPOINT  URL of an OpenAI-compatible chat endpoint
+  MERCURY_LLM_MODEL     exact model name that endpoint serves
+  MERCURY_LLM_API_KEY   (optional; sent as "Authorization: Bearer ***")
 
-Fallback: if the endpoint is configured but unreachable, fall back to a
-lightweight rule-based classifier so the feature still works offline. If
-no endpoint is configured at all (MERCURY_LLM_ENDPOINT unset), no
-fallback runs: classify_batch_llm raises LLMNotConfigured and the UI
-greys out the Classify button.
+Fallback: if both are configured but the endpoint is unreachable, fall
+back to a lightweight rule-based classifier so the feature still works
+offline. If either variable is missing, no fallback runs:
+classify_batch_llm raises LLMNotConfigured and the UI greys out the
+Classify button.
 """
 from __future__ import annotations
 
@@ -44,9 +44,6 @@ IGNORED_CATEGORY = "Ignored"
 # offers (manual assign, rule targets) plus the reserved "Ignored".
 UI_CATEGORIES = STANDARD_CATEGORIES + [IGNORED_CATEGORY]
 
-DEFAULT_ENDPOINT = os.environ.get("MERCURY_LLM_ENDPOINT", "http://localhost:11434/v1/chat/completions")
-DEFAULT_MODEL = os.environ.get("MERCURY_LLM_MODEL", "llama3.2")
-
 # Descriptions per LLM request. One request for ALL unknowns breaks at
 # real scale: a 600-item prompt makes Qwen3-style models spend thousands
 # of reasoning tokens before the JSON array, the combined output exceeds
@@ -69,13 +66,24 @@ class LLMNotConfigured(RuntimeError):
     """Raised when classify is requested but no LLM endpoint is configured."""
 
 
-def llm_configured() -> bool:
-    """True when the user explicitly configured an LLM endpoint.
+def llm_endpoint() -> str:
+    """The configured endpoint URL, or '' (no built-in default)."""
+    return os.environ.get("MERCURY_LLM_ENDPOINT", "").strip()
 
-    A set MERCURY_LLM_ENDPOINT is the signal that a model is meant to be
-    used; the default endpoint/model values are just placeholders.
+
+def llm_model() -> str:
+    """The configured model name, or '' (no built-in default)."""
+    return os.environ.get("MERCURY_LLM_MODEL", "").strip()
+
+
+def llm_configured() -> bool:
+    """True only when BOTH the endpoint AND the model are set.
+
+    A half-configured setup (endpoint without a model name, or the
+    other way round) counts as unconfigured rather than silently
+    guessing a value the user never chose.
     """
-    return bool(os.environ.get("MERCURY_LLM_ENDPOINT"))
+    return bool(llm_endpoint() and llm_model())
 
 
 def classify_batch_llm(descriptions: list[str]) -> list[Optional[str]]:
@@ -91,15 +99,15 @@ def classify_batch_llm(descriptions: list[str]) -> list[Optional[str]]:
     whole run. A failing batch falls back to the deterministic keyword
     rules on its own; the rest of the run continues.
 
-    Raises LLMNotConfigured when no endpoint is configured (no silent
-    keyword fallback in that case).
+    Raises LLMNotConfigured when the endpoint or the model is not
+    configured (no silent keyword fallback in that case).
     """
     if not descriptions:
         return []
     if not llm_configured():
         raise LLMNotConfigured(
-            "LLM is not configured — set MERCURY_LLM_ENDPOINT (and "
-            "MERCURY_LLM_MODEL) and restart the server")
+            "LLM is not configured — set both MERCURY_LLM_ENDPOINT "
+            "and MERCURY_LLM_MODEL and restart the server")
     results: list[Optional[str]] = []
     n_batches = (len(descriptions) + BATCH_SIZE - 1) // BATCH_SIZE
     for i in range(n_batches):
@@ -117,8 +125,8 @@ def classify_batch_llm(descriptions: list[str]) -> list[Optional[str]]:
 
 
 def _call_local_llm(descriptions: list[str]) -> list[Optional[str]]:
-    endpoint = os.environ.get("MERCURY_LLM_ENDPOINT", DEFAULT_ENDPOINT)
-    model = os.environ.get("MERCURY_LLM_MODEL", DEFAULT_MODEL)
+    endpoint = llm_endpoint()
+    model = llm_model()
 
     numbered = "\n".join(f"{i}. {d}" for i, d in enumerate(descriptions))
     prompt = (
