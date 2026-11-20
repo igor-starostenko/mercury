@@ -76,8 +76,12 @@ in the Manage Imports panel:
 
 - `POST /api/upload` — multipart form, field `files` (one or more CSVs).
   Rows are merged into the table by stable key and stamped with the
-  import they came from: duplicates are skipped, original imports and
-  existing edits are preserved, re-uploading is a no-op.
+  import they came from. The source listing is authoritative: every row
+  the file lists is imported — a file listing the identical row (same
+  day, account, amount, description) several times means several real
+  transactions. Only rows the database already holds from an earlier
+  (overlapping) import are skipped, so existing imports and edits are
+  preserved and re-uploading a file is a no-op.
 - `uv run python generate_samples.py` — generates synthetic sample CSVs in
   `app/data/extracts/` (no real data is stored in this repo). These are
   the "dummy data" behind the demo dashboard: generate them, then import

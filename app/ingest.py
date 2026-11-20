@@ -17,6 +17,7 @@ import csv
 import os
 import re
 import tempfile
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, date
 from pathlib import Path
@@ -61,11 +62,13 @@ def build_key(source: str, account: str, d: date, amount: float,
     """Stable identity for a transaction.
 
     Two rows from the *same* account on the *same* date with the *same*
-    amount and description are treated as the same transaction (this is what
-    lets overlapping extracts collapse). Description is normalized (lowercase,
-    whitespace-collapsed) so trivial formatting differences don't break the
-    match, but it is still part of the key so two genuinely different charges
-    on the same day are kept distinct.
+    amount and description are the same transaction *row* — this is what
+    lets overlapping extracts collapse. Description is normalized
+    (lowercase, whitespace-collapsed) so trivial formatting differences
+    don't break the match, but it is still part of the key so two genuinely
+    different charges on the same day stay distinct. Note the key alone
+    does not decide duplicates: a source file that lists the identical row
+    N times means N real transactions (see merge_txns).
     """
     norm_desc = re.sub(r"\s+", " ", (description or "").strip()).lower()
     return f"{source}|{account}|{d.isoformat()}|{round(amount, 2)}|{norm_desc}"
@@ -595,9 +598,15 @@ def merge_txns(con: duckdb.DuckDBPyConnection,
                import_id: int | None = None) -> tuple[int, int]:
     """Merge parsed transactions into the table by stable key.
 
-    Rows whose key already exists (from any earlier upload) are skipped, so
-    existing rows — including manual/LLM categories — are never touched.
-    Uploads are idempotent: re-sending the same file adds nothing.
+    The source listing is authoritative: every row the file lists is
+    inserted — a file listing the identical row (same date/account/
+    amount/description) N times means N real transactions. Dedupe applies
+    to what the database already holds per key: only the surplus of the
+    file's multiplicity over the existing row count is inserted. So
+    re-sending the same file adds nothing (its rows are already in the
+    table, count-for-count), and overlapping extracts collapse — while
+    existing rows, their imported categories, and their override/soft-
+    delete entries are never touched.
 
     Categories are not written at insert time: the CSV-provided value is
     stored as-is, and rules apply to new rows at read time through the
@@ -616,13 +625,22 @@ def merge_txns(con: duckdb.DuckDBPyConnection,
     # but this merge must stand alone too.
     from . import imports as _imports  # local import: no cycle at module load
     _imports.ensure_import_column(con)
-    existing = {k for (k,) in con.execute(
-        "SELECT key FROM transactions").fetchall()}
-    seen: set[str] = set()
+    existing = Counter(k for (k,) in con.execute(
+        "SELECT key FROM transactions").fetchall())
+    # The source listing is authoritative: every row a file lists is a real
+    # transaction — including N identical rows (same date/account/amount/
+    # description), which a bank lists once per actual charge. So dedupe
+    # only against what the database already holds per key: insert the
+    # surplus of the file's multiplicity over the existing count. That
+    # keeps re-uploads no-ops (the file's rows are already in the table,
+    # count-for-count) and overlapping extracts collapsing (each key lands
+    # once), without silently dropping legitimately repeated rows.
+    file_counts = Counter(t.key for t in txns)
+    filled: Counter[str] = Counter()
     new: list[Txn] = []
     for t in txns:
-        if t.key not in existing and t.key not in seen:
-            seen.add(t.key)
+        if existing[t.key] + filled[t.key] < file_counts[t.key]:
+            filled[t.key] += 1
             new.append(t)
     if new:
         # Continue the id sequence; ids from earlier rebuilds/merges are
