@@ -1,27 +1,154 @@
 # Mercury
 
-Local family finance dashboard: FastAPI + DuckDB. Parse bank CSV exports,
-classify transactions, browse spend analytics. Runs entirely on your machine
-on a localhost port — no cloud, no accounts.
+**Your family's money, finally in one place — and it never leaves your house.**
 
-## Setup
+Mercury is a personal-finance dashboard that runs on your own computer.
+Hand it the CSV exports your bank gives you, and it hands back clear
+answers: where the money went, how each month compares to the last, what
+a normal month looks like, and which category is quietly growing.
+
+Why people like it:
+
+- **No account, no cloud, no subscription.** Mercury runs on your machine
+  and is viewed in your own browser at a local address. Your transactions
+  live in one file on your disk — no other server ever sees them.
+- **No bank logins.** You import the CSV files your bank already lets you
+  export (Wells Fargo, Chase, Apple Card, US Bank). No passwords to store,
+  nothing to sync, nothing to break.
+- **It learns your household.** One-off fixes and reusable rules
+  ("Starbucks" → Dining) make the categorization better the more you use
+  it — and you can always override anything.
+- **Optional AI, on your terms.** You can point Mercury at an AI model
+  running *on your own hardware* to auto-fill unknown categories. Skip it
+  and everything works exactly the same.
+
+The bottom line: statements in, honest charts out, nothing leaving the
+house.
+
+## How it works
+
+The whole tool is a four-step loop: **import** your statements,
+**categorize** each transaction, **refine** what's off, and **read** the
+charts. That's it — here's each step in plain terms.
+
+### 1. Get it running (one time)
 
 ```bash
-uv sync   # creates .venv from the locked versions in uv.lock
+uv sync               # downloads the program's pieces (one time only)
+uv run python -m app.main
 ```
 
-## Run
+Then open **http://127.0.0.1:8000** in your browser. That's the whole
+app — a few pages, no login. (Want a different address or port? See the
+[setup notes](#setup-and-data-for-the-slightly-more-curious) below.)
+
+### 2. Import your bank statements
+
+In the top bar, click **Manage Imports**, then:
+
+- **Import CSV files** — pick one or more CSV exports, or
+- **Import folder** — pick your whole bank-exports folder; every file in
+  it goes in with one click.
+
+Keep the bank's **original filenames** — Mercury works out which bank a
+file is from from the name (Wells Fargo, Chase, Apple Card, US Bank). If
+it can't tell, it simply asks you to pick the bank for that file; nothing
+fails.
+
+Importing is safe to repeat: re-uploading a file you've already imported
+adds nothing new — Mercury matches on date, account, amount, and
+description, and only brings in rows it doesn't have yet.
+
+Every upload is listed in **Manage Imports**, where you can also:
+
+- **Rename an import's account** — the account label is guessed from the
+  filename; rename it when you have, say, a second checking account at
+  the same bank (`Wells Fargo — Checking` → `Checking #2`).
+- **Delete an import** — removes just that file's transactions, keeping
+  your rules and every other import untouched.
+
+### 3. How categorization works
+
+Every transaction ends up with a category, from the **first** of these
+that applies — your own choices always win:
+
+1. **You** — a category you picked yourself. It's pinned; nothing
+   overrides it.
+2. **Your rules** — "if the description contains this, call it that"
+   (e.g. `starbucks` → Dining). A rule applies to *every* matching
+   transaction at once, takes effect the moment you save it, never
+   rewrites the imported data, and can be limited to one bank or one
+   account. Rules are in a priority list — drag them to reorder.
+3. **The AI** (optional) — categories filled in by the **Classify
+   unknown (LLM)** button, using a model on your own machine.
+4. **The bank's label** — the category the CSV already contained.
+
+Anything that still has no category shows up as **Unknown** on the
+Transactions page, where you can fix it in one click.
+
+### 4. Keep the totals honest
+
+- **Ignore transfers and noise.** Use the **Ignore transactions** panel
+  (Overview or Categories page) to exclude by keyword ("transfer",
+  "payment from me") or by date range — or pick **Ignored** on a single
+  transaction. Ignored rows stay visible, dimmed and marked, but are
+  excluded from every total. That's the intended home for money moving
+  between your own accounts.
+- **Remove a wrong row** with the × next to it. It disappears from all
+  views and totals, and it can be brought back (restore) if you change
+  your mind. The original import is never rewritten.
+- **See who set a category** — every row you, the AI, or a rule touched
+  is listed on the Transactions page with a badge, the original bank
+  category ("was: …"), and a search box. Re-picking a category makes it
+  yours and pins it.
+
+### 5. Read your money (page tour)
+
+| Page | What you see |
+| --- | --- |
+| **Overview** | Cash flow by month (all time) — stacked by category or as spend-vs-income totals, with trailing 12-month average lines. Year cards, an accounts table, and spend by category. Click a bar, a year, or a category row to zoom in. The rule and ignore panels live here too. |
+| **Categories** | The monthly spend trend for any category (one or several at once) against its 12-month average — the fastest way to spot "we're spending more on X". |
+| **Transactions** | Everything Mercury itself categorized (you / AI / rule) plus what's still unknown — with search, a "Set by" filter, inline category editing, and the optional Classify (LLM) button. |
+| **Year** | One year in detail: monthly cash flow and spend by category. |
+| **Month** | One month in detail: weekly cash flow, spend by category, and the full transaction list for that month (searchable, sortable by date, description, or amount). |
+
+Every transaction list is clickable-to-sort, and every chart can be
+drilled into. That's the product; the rest of this README is for the
+curious and the technical.
+
+### Trying it first? Sample data
+
+```bash
+uv run python generate_samples.py
+```
+
+creates realistic *fake* CSVs (all four banks) in `app/data/extracts/` —
+import them via Manage Imports to tour the app before touching real
+statements. No real data is stored in this repo.
+
+## Setup and data, for the slightly more curious
+
+### Setup
+
+```bash
+uv sync               # creates .venv from the locked versions in uv.lock
+```
+
+Dependencies are pinned in `pyproject.toml` and fully locked (including
+transitive deps) in `uv.lock` — commit both. Update with `uv add pkg` /
+`uv lock --upgrade`, then `uv sync`.
+
+### Run
 
 ```bash
 uv run python -m app.main
 # → http://127.0.0.1:8000
 ```
 
-Bind/host configurable via `MERCURY_HOST` / `MERCURY_PORT`.
-
-Dependencies are pinned in `pyproject.toml` and fully locked (including
-transitive deps) in `uv.lock` — commit both. Update with `uv add pkg` /
-`uv lock --upgrade`, then `uv sync`.
+Bind/host configurable via `MERCURY_HOST` / `MERCURY_PORT` (the startup
+log prints the port that actually got bound). There is no hot reload:
+after changing Python code, restart the server; browser files
+(`app/static/`) are re-read per request, so those just need a refresh.
 
 ### Database
 
@@ -31,6 +158,11 @@ empty tables, so a fresh clone starts with no data. If you start the
 server and see stale data, it comes from a leftover
 `app/mercury.duckdb` in your working copy (gitignored, so git won't
 show it) — move it aside and the next start is fresh.
+
+The file is small and disposable by design — **the bank CSVs are the
+source of truth, not the database** (manual/LLM categories live in it,
+so back up the file if you value those; re-importing alone restores the
+rows, not the categories).
 
 Use a different database file — e.g. your own data — without touching
 the default:
@@ -73,7 +205,6 @@ in the Manage Imports panel:
   import's account for all of its rows.
 - `DELETE /api/imports/{id}?source=…` — deletes an import's rows; the
   `source` filter scopes a synthetic "earlier import" group to one bank.
-
 - `POST /api/upload` — multipart form, field `files` (one or more CSVs).
   Rows are merged into the table by stable key and stamped with the
   import they came from. The source listing is authoritative: every row
@@ -104,7 +235,7 @@ in the Manage Imports panel:
 Mercury can fill in the category for transactions it doesn't
 recognize by asking an AI model. **This feature is completely
 optional** — the app works exactly the same without it: you can
-assign categories by hand (the category dropdowns on the Categories
+assign categories by hand (the category dropdowns on the Transactions
 page) and with custom category rules, and the **Classify unknown
 (LLM)** button is simply greyed out.
 
@@ -116,8 +247,8 @@ things when you start the server:
 1. **Where the model is** — `MERCURY_LLM_ENDPOINT`, the URL of the
    server's chat endpoint. Example for Ollama running on your own
    machine: `http://localhost:11434/v1/chat/completions`.
-2. **Which model to use** — `MERCURY_LLM_MODEL`, the exact name of
-   the model that server runs. You can list the names it offers with
+2. **Which model to use** — `MERCURY_LLM_MODEL`, the exact name of the
+   model that server runs. You can list the names it offers with
    `curl http://localhost:11434/v1/models` (for Ollama). Example:
    `llama3.2`.
 
@@ -127,7 +258,7 @@ stays off — the Classify button is greyed out, `GET /api/health`
 reports `llm_configured: false`, and `POST /api/classify` returns a
 `503` that says what to set. If your model server asks for a key,
 also set the optional `MERCURY_LLM_API_KEY` (sent to the server as
-`Authorization: Bearer <key>`). Example:
+`Authorization: Bearer *** Example:
 
 ```bash
 MERCURY_LLM_ENDPOINT=http://localhost:11434/v1/chat/completions \
