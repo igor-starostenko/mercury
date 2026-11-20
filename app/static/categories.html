@@ -30,6 +30,22 @@
 
   <section class="section">
     <div class="section-head">
+      <h2>Monthly spend trend</h2>
+      <div class="catpick" id="catPick">
+        <button type="button" class="catpick-btn" id="catPickBtn"
+                aria-haspopup="true" aria-expanded="false">
+          <span id="catPickLabel">…</span><span class="catpick-caret">▾</span>
+        </button>
+        <div class="catpick-menu" id="catPickMenu" role="listbox"
+             aria-multiselectable="true" aria-label="Categories in the trend chart"></div>
+      </div>
+      <span class="hint">spend of the selected categories · line = 12-mo rolling average of their combined spend</span>
+    </div>
+    <div class="panel" id="catTrendPanel"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
       <h2>Custom category rules</h2>
       <span class="hint">keyword in description → category · drag rows to change priority · first match wins · originals are never modified</span>
     </div>
@@ -192,14 +208,148 @@ $id('ovSearch').addEventListener('input', () => {
   ovSearchTimer = setTimeout(loadOverrides, 200);
 });
 
+/* ---------------------------------------------- monthly spend trend */
+/* Trend chart restricted to the categories the multiselect picker
+ * chose. The selection persists in localStorage (mercury.catTrendSel);
+ * a first visit defaults to Groceries only. Bars = per-selected-
+ * category monthly spend (stacked); line = 12-month rolling average
+ * of the selected categories' COMBINED spend. Data comes from
+ * /api/monthly (the same all-time payload the Overview flow chart
+ * uses); filtering is client-side, so toggling the picker redraws
+ * instantly with no refetch.
+ */
+const CAT_TREND_LS = 'mercury.catTrendSel';
+const CAT_TREND_DEFAULT = ['Groceries'];
+let _catTrendData = null; // {months, byCategory} from /api/monthly
+
+function catTrendSelRaw() {
+  try {
+    const v = localStorage.getItem(CAT_TREND_LS);
+    if (v === null) return null; // never saved
+    const sel = JSON.parse(v);
+    return Array.isArray(sel)
+      ? sel.filter(c => typeof c === 'string' && c) : null;
+  } catch (e) { return null; }
+}
+
+/* Picker options: the standard categories minus "Ignored" (it is
+ * filtered out of every aggregate, so selecting it would draw nothing)
+ * plus custom rule categories that have spend in the data. Sorted
+ * alphabetically. */
+function catTrendOptions() {
+  const names = new Set(CATS.filter(c => c !== 'Ignored'));
+  if (_catTrendData) for (const r of _catTrendData.byCategory) names.add(r.category);
+  return [...names].sort((a, b) => a.localeCompare(b));
+}
+
+/* Saved selection, filtered to names that still exist; never saved
+ * (or not an array) → the default. A saved [] (user unchecked
+ * everything) is respected as-is. */
+function catTrendSel(options) {
+  const raw = catTrendSelRaw();
+  const base = raw === null ? CAT_TREND_DEFAULT : raw;
+  return [...new Set(base.filter(c => options.includes(c)))];
+}
+
+function saveCatTrendSel(sel) {
+  try { localStorage.setItem(CAT_TREND_LS, JSON.stringify(sel)); } catch (e) {}
+}
+
+function catTrendLabel(sel) {
+  if (!sel.length) return 'No categories';
+  if (sel.length === 1) return sel[0];
+  if (sel.length === 2) return sel[0] + ' + ' + sel[1];
+  return sel.length + ' categories';
+}
+
+function paintCatTrendBtn(sel) {
+  $id('catPickLabel').textContent = catTrendLabel(sel);
+}
+
+function buildCatTrendPicker() {
+  const options = catTrendOptions();
+  const sel = catTrendSel(options);
+  saveCatTrendSel(sel); // normalize: drop names that no longer exist
+  const menu = $id('catPickMenu');
+  menu.innerHTML = options.map(name => `
+    <label class="catpick-item">
+      <input type="checkbox" data-cat="${esc(name)}"
+             ${sel.includes(name) ? 'checked' : ''}>
+      <span class="dot" style="background:${catColor(name)}"></span>${esc(name)}
+    </label>`).join('');
+  menu.querySelectorAll('input').forEach(inp => {
+    inp.addEventListener('change', () => {
+      // Keep the previous selection order (stable bar stacking); a
+      // newly checked category appends at the end.
+      let next = catTrendSel(options).filter(c => c !== inp.dataset.cat);
+      if (inp.checked) next.push(inp.dataset.cat);
+      saveCatTrendSel(next);
+      paintCatTrendBtn(next);
+      renderCatTrendChart();
+    });
+  });
+  paintCatTrendBtn(sel);
+}
+
+function wireCatTrendPicker() {
+  const btn = $id('catPickBtn'), menu = $id('catPickMenu');
+  const close = () => {
+    menu.style.display = 'none';
+    btn.setAttribute('aria-expanded', 'false');
+  };
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    // Computed, not inline, style: the menu's initial inline display is
+    // empty (CSS says none), so the inline check misfired on click one.
+    const open = getComputedStyle(menu).display !== 'none';
+    menu.style.display = open ? 'none' : 'block';
+    btn.setAttribute('aria-expanded', String(!open));
+  });
+  menu.addEventListener('click', e => e.stopPropagation());
+  document.addEventListener('click', close);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+}
+
+function renderCatTrendChart() {
+  const panel = $id('catTrendPanel');
+  const data = _catTrendData;
+  if (!data || !data.months.length) {
+    panel.innerHTML = '<p class="empty">No transactions yet.</p>';
+    return;
+  }
+  const sel = catTrendSel(catTrendOptions());
+  if (!sel.length || !data.byCategory.some(r => sel.includes(r.category))) {
+    panel.innerHTML = '<p class="empty">Pick at least one category in the dropdown.</p>';
+    return;
+  }
+  const keys = data.months;
+  const byCat = data.byCategory.filter(r => sel.includes(r.category));
+  const totals = keys.map(k => {
+    let s = 0;
+    for (const r of byCat) if (r.key === k) s += r.spend || 0;
+    return Math.round(s * 100) / 100;
+  });
+  panel.innerHTML = '<canvas id="catTrendChart"></canvas>';
+  makeCategoryTrendChart($id('catTrendChart'), {
+    labels: keys.map(monthLabel),
+    keys,
+    categories: sel,
+    byCategory: byCat,
+    totals,
+    avgSpend: trailingAvg(keys, totals, 12),
+  });
+}
+
 async function renderAll() {
-  const [summary, cats, ruleData, dateIg, accounts] = await Promise.all([
-    api('/api/summary'),
-    api('/api/categories'),
-    api('/api/rules'),
-    api('/api/date-ignores'),
-    api('/api/accounts'),
-  ]);
+  const [summary, cats, ruleData, dateIg, accounts, monthly] =
+    await Promise.all([
+      api('/api/summary'),
+      api('/api/categories'),
+      api('/api/rules'),
+      api('/api/date-ignores'),
+      api('/api/accounts'),
+      api('/api/monthly'),
+    ]);
 
   $id('emptyHint').style.display = summary.n_transactions ? 'none' : 'block';
   setRangeSub(totalsSub(summary));
@@ -212,6 +362,19 @@ async function renderAll() {
   // Accounts feed the rule scope dropdowns (source/account filters).
   renderRules(ruleData, accounts);
   renderIgnoreRules(ruleData, dateIg, accounts);
+
+  // Monthly spend trend: all-time /api/monthly payload, filtered
+  // client-side to the picker's selection (see catTrend* above).
+  _catTrendData = {
+    months: [...new Set([
+      ...monthly.spend.map(d => d.month),
+      ...monthly.income.map(d => d.month),
+    ])].sort(),
+    byCategory: (monthly.flow_by_category || []).map(r =>
+      ({ key: r.bucket, category: r.category, spend: r.spend })),
+  };
+  buildCatTrendPicker();
+  renderCatTrendChart();
 
   // Merged categorization list: overrides + still-uncategorized rows.
   // Chip/search/sort state is kept; the server filters + sorts the full
@@ -227,6 +390,7 @@ async function renderAll() {
   CATS = cats;
   window.LLM_CONFIGURED = !!health.llm_configured;
   renderChrome('categories');
+  wireCatTrendPicker();
   try {
     await renderAll();
   } catch (e) {
