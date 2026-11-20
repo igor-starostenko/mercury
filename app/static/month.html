@@ -56,6 +56,14 @@
       <h2>All transactions</h2>
       <span class="badge" id="txnCount"></span>
       <span class="hint" id="txnHint">click a column to sort</span>
+      <select id="setBySel" class="setby-sel" aria-label="Filter rows by who set the category">
+        <option value="all">Set by: All</option>
+        <option value="manual">Set by: You</option>
+        <option value="llm">Set by: LLM</option>
+        <option value="rule">Set by: Rule</option>
+        <option value="csv">Set by: Bank</option>
+        <option value="uncategorized">Set by: Unknown</option>
+      </select>
       <input type="search" class="txn-search" id="txnSearch"
              placeholder="Search description… (rule-match preview)"
              aria-label="Search transactions by description">
@@ -73,21 +81,32 @@ let _flowCfg = null; // last chart config, so the view toggle re-draws
 
 window.onDataChanged = () => renderMonth(curMonth);
 
-/* Description search on the "All transactions" table. Matching is the
- * category-rule semantics (case-insensitive partial substring on
- * whitespace-normalized text), so the visible rows are exactly the rows
- * a rule with the typed pattern would catch. */
+/* Description search + "Set by" dropdown on the "All transactions"
+ * table. Search matching is the category-rule semantics (case-insensitive
+ * partial substring on whitespace-normalized text), so the visible rows
+ * are exactly the rows a rule with the typed pattern would catch. The
+ * Set-by filter narrows by who set the row's effective category
+ * (txnSetByMatch in js/ui.js) — the same vocabulary as the "Set by"
+ * column on the Transactions page. */
 function updateTxnHint() {
   const table = $id('txnTable');
   const q = ($id('txnSearch').value || '').trim();
-  $id('txnHint').textContent = q
-    ? `showing ${table._lastShown ?? 0} of ${table._lastTotal ?? 0} for “${q}” · click a column to sort`
+  const by = $id('setBySel').value || 'all';
+  $id('txnHint').textContent = (q || by !== 'all')
+    ? `showing ${table._lastShown ?? 0} of ${table._lastTotal ?? 0}${q ? ` for “${q}”` : ''} · click a column to sort`
     : 'click a column to sort';
 }
 
 $id('txnSearch').addEventListener('input', () => {
   const table = $id('txnTable');
   table._search = $id('txnSearch').value;
+  renderTxnTable(table);
+  updateTxnHint();
+});
+
+$id('setBySel').addEventListener('change', () => {
+  const table = $id('txnTable');
+  table._setBy = $id('setBySel').value;
   renderTxnTable(table);
   updateTxnHint();
 });

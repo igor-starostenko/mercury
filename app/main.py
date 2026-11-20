@@ -681,6 +681,11 @@ def categories_page():
     return FileResponse(STATIC_DIR / "categories.html")
 
 
+@app.get("/transactions")
+def transactions_page():
+    return FileResponse(STATIC_DIR / "transactions.html")
+
+
 @app.get("/month")
 def month_page():
     return FileResponse(STATIC_DIR / "month.html")
