@@ -338,9 +338,15 @@ def override_rows(con: duckdb.DuckDBPyConnection,
     match and were missing a category in the CSV import are included as
     well, with ``set_by`` = 'uncategorized' (still uncategorized).
 
-    Filtering and sorting run in SQL over the FULL history, not over a
-    truncated page — ``LIMIT`` is applied after the server-side filter
-    and sort. Parameters:
+    Without a search the rows are the section's base set above. With a
+    ``q`` and ``set_by='all'`` the search scans the FULL history
+    instead — a typed search must find every matching transaction,
+    including rows that only carry the bank's CSV category and are not
+    listed by default; those carry ``set_by`` = 'csv' (badge "bank").
+    Chip-scoped searches keep their provenance scope. Filtering and
+    sorting run in SQL over the full history, not over a truncated page
+    — ``LIMIT`` is applied after the server-side filter and sort.
+    Parameters:
 
     - ``set_by``: 'all' (default), 'manual', 'llm', 'rule', or
       'uncategorized' (rows still missing a category; the legacy
@@ -369,16 +375,28 @@ def override_rows(con: duckdb.DuckDBPyConnection,
     if sort_dir not in ("asc", "desc"):
         raise ValueError("sort_dir must be 'asc' or 'desc'")
 
-    where = ["(v.override_source IS NOT NULL OR (? = 1 AND ("
-             "t.category IS NULL OR t.category = ''"
-             " OR t.category = 'Uncategorized')))"]
-    params: list[Any] = [int(include_uncategorized)]
+    q_norm = " ".join((q or "").split())
+    if q_norm and set_by == "all":
+        # A typed search runs over the FULL history — not just this
+        # section's base set. The list shows rows a user / the LLM / a
+        # rule categorized and rows still missing a category; rows that
+        # carry only the bank's CSV category are not listed by default,
+        # but a search must still find them (and a rule with that
+        # pattern would catch them — the search is the rule dry-run).
+        # Chip filters keep their provenance scope: searching inside
+        # "You" still means user-set rows only.
+        where: list[str] = []
+        params: list[Any] = []
+    else:
+        where = ["(v.override_source IS NOT NULL OR (? = 1 AND ("
+                 "t.category IS NULL OR t.category = ''"
+                 " OR t.category = 'Uncategorized')))"]
+        params: list[Any] = [int(include_uncategorized)]
     if set_by in ("manual", "llm", "rule"):
         where.append("v.override_source = ?")
         params.append(set_by)
     elif set_by == "uncategorized":
         where.append("v.override_source IS NULL")
-    q_norm = " ".join((q or "").split())
     if q_norm:
         # Whitespace-normalized substring, exactly like the UI search
         # and the category-rule matching.
@@ -410,12 +428,14 @@ def override_rows(con: duckdb.DuckDBPyConnection,
         SELECT v.id, v.source, v.account, CAST(v.txn_date AS VARCHAR),
                v.amount, v.description, v.category, t.category,
                v.override_source,
+               o2.txn_id IS NOT NULL,
                (t.category IS NULL OR t.category = ''
                 OR t.category = 'Uncategorized') AS missing_csv,
                (COALESCE(v.category, '') = 'Ignored'
                 OR COALESCE(v.date_ignored, false)) AS ignored
         FROM effective_transactions AS v
         JOIN transactions AS t ON t.id = v.id
+        LEFT JOIN category_overrides AS o2 ON o2.txn_id = v.id
         WHERE {where_sql}
         ORDER BY {_OVERRIDE_SORTS[sort_by]} {sort_dir}, v.id ASC
         LIMIT ?
@@ -430,14 +450,32 @@ def override_rows(con: duckdb.DuckDBPyConnection,
         # verify rules before/without applying anything.
         matched = rules.matching_rules(r[5], enabled,
                                        source=r[1], account=r[2])
+        # r[9] = a stored override exists (True/False) — the source column
+        # itself can be NULL on legacy rows, so existence decides.
+        resolved, has_override, missing = r[8], r[9], r[10]
+        if has_override:
+            # Stored override: source tracked (manual/llm/rule) or a
+            # legacy override from before source tracking (NULL source).
+            set_by = resolved or "unknown"
+        elif resolved is not None:
+            # No stored override — the view resolved 'rule' (live match).
+            set_by = resolved
+        elif missing:
+            # No override, no rule, and no CSV category: pending.
+            set_by = "uncategorized"
+        else:
+            # No override, no rule — the category is the bank's CSV
+            # original. These rows are not listed by default; a search
+            # surfaces them, so the badge says where the category came
+            # from instead of claiming "unknown".
+            set_by = "csv"
         out.append({
             "id": r[0], "source": r[1], "account": r[2], "date": r[3],
             "amount": r[4], "description": r[5],
             "category": _display_category(r[6]),
             "original_category": r[7],
-            "set_by": ("uncategorized" if r[8] is None and r[9]
-                       else (r[8] or "unknown")),
-            "ignored": bool(r[10]),
+            "set_by": set_by,
+            "ignored": bool(r[11]),
             "rule_match": ({"pattern": matched[0].pattern,
                             "category": matched[0].category,
                             "position": matched[0].position}

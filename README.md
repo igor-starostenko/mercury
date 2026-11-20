@@ -270,14 +270,23 @@ All / You / LLM / Rule / Unknown. Unknown shows the ones still
 uncategorized; All and You also include your re-categorizations of
 CSV-provided categories (the original CSV category is shown as "was: …"
 under the select). The category is editable inline (re-picking one
-marks the row as yours). The chip filter, the description search and
-the column sort all run **server-side over the full history** — the
-API filters and sorts everything in SQL and only then applies its
-limit, so "Unknown" shows every uncategorized transaction, not just
-the ones inside the first page. `GET /api/overrides` returns
-`{"rows": [...], "total": N, "uncategorized": M}`: the window, the
-count of rows matching the current filter, and the full-history count
-of still-uncategorized rows (drives the "N need a category" badge).
+marks the row as yours). Browsing (no search) shows that base set —
+rows the app itself categorized — while rows that simply keep the
+category their bank's CSV provided are not listed. The description
+search is different: with the **All** chip it scans the **full
+transaction history**, so it also finds those bank-CSV rows (they
+render with the "bank" badge, `set_by = "csv"`); a search inside a chip
+keeps that chip's provenance scope. A search also requests a larger
+window, so its results are every matching record, not the first 1000 —
+the "N of M shown" hint appears only if a term matches more. The chip
+filter, the description search and the column sort all run
+**server-side over the full history** — the API filters and sorts
+everything in SQL and only then applies its limit, so "Unknown" shows
+every uncategorized transaction, not just the ones inside the first
+page. `GET /api/overrides` returns `{"rows": [...], "total": N,
+"uncategorized": M}`: the window, the count of rows matching the
+current filter, and the full-history count of still-uncategorized rows
+(drives the "N need a category" badge).
 Add `include_uncategorized=true` to also get the still-uncategorized
 rows (those carry `set_by = "uncategorized"`). Filter and sort
 parameters: `set_by=all|manual|llm|rule|uncategorized`,
@@ -315,9 +324,13 @@ uses the exact same matching as category rules — case-insensitive
 partial substring on whitespace-normalized description text — so the
 rows shown for a phrase are precisely the rows a rule with that
 pattern would catch: type a candidate pattern to dry-run it before
-saving it. Search is a client-side filter over the rows already loaded
-(no extra API calls) and composes with the All / You / LLM / Rule /
-Unknown chips (both must match).
+saving it. Search is a server-side filter over the full history (the
+request includes the term, so no row is filtered out before matching)
+and composes with the All / You / LLM / Rule / Unknown chips (both
+must match). In the categorization list, an active search widens the
+scope from the section's base set to every transaction — bank-CSV rows
+included, badged "bank" — and raises the result window so all matches
+are returned (see above).
 
 While a search is active, the matched text is highlighted in each
 description and the header hint shows how many rows are visible.

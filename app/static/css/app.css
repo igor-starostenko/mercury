@@ -130,6 +130,10 @@ th.sortable .sort-ind { margin-left: 4px; font-size: 8px; letter-spacing: 0; }
 .badge.src-llm { background: rgba(79, 140, 255, .16); color: var(--accent); }
 .badge.src-rule { background: rgba(255, 193, 77, .14); color: #ffc14d; }
 .badge.src-uncategorized { background: rgba(138, 144, 162, .16); color: var(--muted); }
+/* Bank's CSV category: rows surfaced by a search that don't show in the
+ * list by default (no override, no rule match). Neutral grey like
+ * "pending", but a distinct shade — nobody re-categorized these. */
+.badge.src-csv { background: rgba(138, 144, 162, .10); color: var(--muted); }
 /* Reserved "Ignored" category: rows stay visible but dimmed, with a tag
  * explaining they are out of every total. */
 .txn-ignored td { opacity: .55; }
@@ -158,9 +162,9 @@ tr.open .chev { transform: rotate(90deg); color: var(--accent); }
 .share-bar { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
 .share-bar i { display: block; height: 100%; border-radius: 3px; }
 /* Bidirectional share bar (category table): left half = spend, right half =
-   net credits, each scaled to its own direction's total. The % label keeps a
-   fixed outer slot on every row so both halves stay the same width. */
-.share-split { display: flex; align-items: center; gap: 3px; }
+   net credits, each scaled to its own direction's total. The % label always
+   sits in the left slot (every row); the tracks meet the zero tick flush. */
+.share-split { display: flex; align-items: center; gap: 0; }
 .share-side { display: flex; align-items: center; gap: 5px; flex: 1; min-width: 0; }
 .share-side .share-bar { flex: 1; }
 .share-side.neg .share-bar i { margin-left: auto; }
