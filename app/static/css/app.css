@@ -158,9 +158,9 @@ tr.open .chev { transform: rotate(90deg); color: var(--accent); }
 .share-bar { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
 .share-bar i { display: block; height: 100%; border-radius: 3px; }
 /* Bidirectional share bar (category table): left half = spend, right half =
-   net credits, each scaled to its own direction's total. The % label keeps a
-   fixed outer slot on every row so both halves stay the same width. */
-.share-split { display: flex; align-items: center; gap: 3px; }
+   net credits, each scaled to its own direction's total. The % label always
+   sits in the left slot (every row); the tracks meet the zero tick flush. */
+.share-split { display: flex; align-items: center; gap: 0; }
 .share-side { display: flex; align-items: center; gap: 5px; flex: 1; min-width: 0; }
 .share-side .share-bar { flex: 1; }
 .share-side.neg .share-bar i { margin-left: auto; }
