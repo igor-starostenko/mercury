@@ -654,7 +654,13 @@ function makeFlowChart(canvas, cfg) {
 /* Rendered into a container:
  *   container: element (use a .panel.tight wrapper)
  *   catData:   [{category, spend, refunds, net, n}] from /api/categories —
- *              net = spend − refunds; net < 0 renders green with a + sign
+ *              net = spend − refunds. Signed display: net spend (net > 0)
+ *              renders red with a − sign (class num neg), net credit
+ *              (net < 0) green with a + sign (class num pos).
+ *   Share: bidirectional bar around a center zero line — spend bars extend
+ *          left, credit bars right; each half is scaled to ITS OWN
+ *          direction's total, so both directions can use the full half-width.
+ *          The % label shows the same share next to the bar.
  *   scope:     {} | {year} | {month} — query scope for drill-downs
  */
 async function renderCategoryTable(container, catData, scope) {
@@ -662,28 +668,44 @@ async function renderCategoryTable(container, catData, scope) {
     container.innerHTML = '<p class="empty">No spending in this scope.</p>';
     return;
   }
-  const total = catData.reduce((a, d) => a + Math.max(0, d.net), 0) || 1;
+  const spendTotal = catData.reduce((a, d) => a + Math.max(0, d.net), 0) || 1;
+  const creditTotal = catData.reduce((a, d) => a + Math.max(0, -d.net), 0) || 1;
   container.innerHTML = `
     <table class="cat-table">
       <thead><tr>
         <th style="width:28px"></th><th>Category</th><th class="num">Txns</th>
-        <th class="num" title="Net = spend − refunds. Green = net credit (refunds exceeded spend).">Net</th>
-        <th style="width:24%">Share</th>
+        <th class="num" title="Net = spend − refunds. Red − = net spend; green + = net credit (refunds exceeded spend).">Net</th>
+        <th style="width:24%" title="Share of each direction's total: left bars = share of total spend, right bars = share of total net credits.">Share</th>
       </tr></thead>
       <tbody>${catData.map((d, i) => {
         const color = catColor(d.category);
         const net = d.net;
-        const pct = (Math.max(0, net) / total * 100).toFixed(1);
-        const netCell = net < 0
-          ? `<td class="num pos">+${fmtMoney(-net)}</td>`
-          : `<td class="num">${fmtMoney(net)}</td>`;
+        const isSpend = net >= 0;
+        const pct = ((isSpend ? net / spendTotal : -net / creditTotal) * 100).toFixed(1);
+        const netCell = isSpend
+          ? `<td class="num neg">${fmtMoney(-net)}</td>`
+          : `<td class="num pos">+${fmtMoney(-net)}</td>`;
+        // Diverging bar: fill anchored at the zero line, extending outward.
+        // The % label sits in the outer slot of the active side; the inactive
+        // side keeps an empty slot so both halves stay the same width.
+        const shareCell = isSpend
+          ? `<td><div class="share-split">
+              <div class="share-side neg"><span class="share-pct">${pct}%</span><div class="share-bar"><i style="width:${pct}%;background:var(--spend)"></i></div></div>
+              <div class="share-zero"></div>
+              <div class="share-side pos"><div class="share-bar"><i style="width:0"></i></div><span class="share-pct"></span></div>
+            </div></td>`
+          : `<td><div class="share-split">
+              <div class="share-side neg"><div class="share-bar"><i style="width:0"></i></div><span class="share-pct"></span></div>
+              <div class="share-zero"></div>
+              <div class="share-side pos"><div class="share-bar"><i style="width:${pct}%;background:var(--income)"></i></div><span class="share-pct">${pct}%</span></div>
+            </div></td>`;
         return `
         <tr class="drill-row" data-i="${i}" data-cat="${esc(d.category)}">
           <td><span class="chev">▶</span></td>
           <td><span class="dot" style="background:${color}"></span>${esc(d.category)}</td>
           <td class="num">${d.n}</td>
           ${netCell}
-          <td><div class="share-bar"><i style="width:${pct}%;background:${color}"></i></div></td>
+          ${shareCell}
         </tr>
         <tr class="detail-row" id="det-${i}" style="display:none">
           <td colspan="5"><div class="detail-wrap" data-cat="${esc(d.category)}"></div></td>
