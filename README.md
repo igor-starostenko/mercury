@@ -88,33 +88,72 @@ in the Manage Imports panel:
 - The CSV's own category labels are mapped to standard categories at
   import time; the imported value is stored in the row as-is and is
   what every report starts from.
-- `POST /api/classify` — batch-classify remaining unknowns via a local
-  LLM: any OpenAI-compatible endpoint works (Ollama, oMLX, LM Studio,
-  llama.cpp server, ...). Configure with `MERCURY_LLM_ENDPOINT`
-  (default `http://localhost:11434/v1/chat/completions` — Ollama),
-  `MERCURY_LLM_MODEL` (default `llama3.2`), and `MERCURY_LLM_API_KEY`
-  (sent as `Authorization: Bearer *** when set).
-  Descriptions are sent in small batches (25 per request), so a long
-  run stays robust and a failing batch only costs itself (the keyword
-  rules cover it). For thinking models (Qwen3 and similar) the request
-  also asks the server to disable reasoning tokens via
-  `chat_template_kwargs`; servers that reject the field are retried
-  without it, once.
-  "Ollama by default"
-  only means the default endpoint points at Ollama's OpenAI-compatible
-  API — nothing is required to be running: if the endpoint is
-  **configured but unreachable**, the built-in keyword rules classify
-  instead. If `MERCURY_LLM_ENDPOINT` is not set at all, no fallback is
-  run: `GET /api/health` reports `llm_configured: false`, the
-  **Classify unknown (LLM)** button (Categories page, next to the
-  categorization list) is greyed out, and `POST /api/classify` returns
-  `503` with the setup hint.
 - `POST /api/categorize` — assign a standard category manually:
   `{"ids": [1, 2], "category": "Groceries"}`. `GET
   /api/standard-categories` returns the full vocabulary — the standard
   categories (including `Beauty`, `Donations` and `Education`) plus the reserved
   `Ignored` marker. The LLM classifier is prompted with everything
   except `Ignored`: ignoring is a human judgment, not a merchant guess.
+
+### Auto-classification with a local AI model (optional)
+
+Mercury can fill in the category for transactions it doesn't
+recognize by asking an AI model. **This feature is completely
+optional** — the app works exactly the same without it: you can
+assign categories by hand (the category dropdowns on the Categories
+page) and with custom category rules, and the **Classify unknown
+(LLM)** button is simply greyed out.
+
+To turn it on, you need a model server already running on your
+machine or network that speaks the OpenAI chat format (Ollama, oMLX,
+LM Studio, llama.cpp server, vLLM, ...), and you tell Mercury two
+things when you start the server:
+
+1. **Where the model is** — `MERCURY_LLM_ENDPOINT`, the URL of the
+   server's chat endpoint. Example for Ollama running on your own
+   machine: `http://localhost:11434/v1/chat/completions`.
+2. **Which model to use** — `MERCURY_LLM_MODEL`, the exact name of
+   the model that server runs. You can list the names it offers with
+   `curl http://localhost:11434/v1/models` (for Ollama). Example:
+   `llama3.2`.
+
+Both settings are **required**. Mercury ships with no defaults and
+never guesses either one: with either missing, the feature simply
+stays off — the Classify button is greyed out, `GET /api/health`
+reports `llm_configured: false`, and `POST /api/classify` returns a
+`503` that says what to set. If your model server asks for a key,
+also set the optional `MERCURY_LLM_API_KEY` (sent to the server as
+`Authorization: Bearer <key>`). Example:
+
+```bash
+MERCURY_LLM_ENDPOINT=http://localhost:11434/v1/chat/completions \
+MERCURY_LLM_MODEL=llama3.2 \
+MERCURY_LLM_API_KEY=*** \
+uv run python -m app.main
+```
+
+The model is only contacted when you press the Classify button (or
+call `POST /api/classify`) — not at startup, and the only data sent
+to it is the transaction descriptions that still need a category,
+sent to the server you configured.
+
+What happens during a classify run:
+
+- Descriptions are sent in small batches (25 per request), so a long
+  run stays robust and a failing batch only costs itself: the
+  built-in keyword rules ("starbucks" → Dining, "uber" →
+  Transportation, ...) cover it.
+- If the endpoint is set but the model server can't be reached at
+  that moment, those keyword rules classify instead of failing the
+  run. This is the only fallback — with the two settings missing,
+  nothing runs at all.
+- For thinking models (Qwen3 and similar) the request also asks the
+  server to disable reasoning tokens via `chat_template_kwargs`;
+  servers that reject the field are retried once without it.
+- The model can only pick from the standard category list (it never
+  returns `Ignored` — ignoring is a human judgment). Each result is
+  stored as an "LLM" category you can change or clear like any other
+  edit.
 
 ### Custom category rules
 

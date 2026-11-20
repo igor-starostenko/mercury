@@ -122,7 +122,7 @@ function renderOverrides() {
     ? ovPendingTotal + ' need a category' : 'all categorized';
   $id('classifyBtn').disabled = !ovPendingTotal || noLlm;
   $id('classifyBtn').title = noLlm
-    ? 'LLM not configured — set MERCURY_LLM_ENDPOINT and restart the server' : '';
+    ? 'LLM not configured — set both MERCURY_LLM_ENDPOINT and MERCURY_LLM_MODEL, then restart the server' : '';
   $id('ovHint').textContent = (q ? `for “${q}” · ` : '')
     + (ovTotal > rows.length
         ? rows.length + ' of ' + ovTotal + ' shown'
