@@ -1,17 +1,17 @@
 # Mercury
 
-**Your family's money, finally in one place — and it never leaves your house.**
+**Your family's money, finally in one place — and it lives on your machine.**
 
 Mercury is a personal-finance dashboard that runs on your own computer.
-Hand it the CSV exports your bank gives you, and it hands back clear
+Hand it the CSV exports you can download from your bank, and it hands back clear
 answers: where the money went, how each month compares to the last, what
 a normal month looks like, and which category is quietly growing.
 
-Why people like it:
+Why you need to try it:
 
 - **No account, no cloud, no subscription.** Mercury runs on your machine
   and is viewed in your own browser at a local address. Your transactions
-  live in one file on your disk — no other server ever sees them.
+  live in DuckDb in one file on your disk — no other server ever sees them.
 - **No bank logins.** You import the CSV files your bank already lets you
   export (Wells Fargo, Chase, Apple Card, US Bank). No passwords to store,
   nothing to sync, nothing to break.
