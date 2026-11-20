@@ -346,14 +346,20 @@ async function runClassify() {
  * The choice is persisted in localStorage per chart (modeKey), so it
  * survives data re-renders and page reloads.
  */
-const FLOW_MAX_CATEGORIES = 8; // at most N category bars: the top N by max
-                               // single-bucket spend get spelled out, the
-                               // rest folds into one "All other" segment
+const FLOW_MAX_CATEGORIES = 8; // at most N category bars by spend: the top N
+                               // by max single-bucket spend get spelled out,
+                               // the rest folds into one "All other" segment
+                               // (the Income category is always spelled out
+                               // in addition — see flowStackPlan)
 const ALL_OTHER = 'All other'; // aggregate bar name — "Other" is a REAL
                                // category, so the two must not collide
 const OTHER_CATEGORY = 'Other'; // standard category (see CAT_COLORS); it
                                 // always aggregates into ALL_OTHER, never
                                 // takes a top-N slot of its own
+const INCOME_CATEGORY = 'Income'; // standard category (see CAT_COLORS);
+                                  // ALWAYS spelled out, never folds into
+                                  // ALL_OTHER — income-only, so the spend
+                                  // ranking can't see it
 
 function flowMode(key) {
   try {
@@ -408,14 +414,18 @@ function withAlpha(color, a) {
 }
 
 /* Stacked-view plan: only the top FLOW_MAX_CATEGORIES by max single-bucket
- * spend are spelled out — the chart is capped at 8 category bars no matter
- * how many buckets or categories the range holds (the old per-bucket union
- * grew with the data: 16+ category rows overflowed the hover popup).
- * The real "Other" category never takes a slot: it always aggregates into
- * "All other" alongside everything outside the top 8 (they share the same
- * grey, so the popup gets one aggregate row, not two). Rank is
+ * spend are spelled out — the chart is capped at 8 category bars by spend
+ * no matter how many buckets or categories the range holds (the old
+ * per-bucket union grew with the data: 16+ category rows overflowed the
+ * hover popup). The Income category is ALWAYS spelled out in addition
+ * (it is income-only, so peak spend 0 would sink it into "All other" —
+ * the largest cash-flow item would be invisible). The real "Other"
+ * category never takes a slot: it always aggregates into "All other"
+ * alongside everything outside the top 8 (they share the same grey, so
+ * the popup gets one aggregate row, not two). Rank is
  * deterministic: peak single-bucket spend, then all-range spend total,
- * then name. Income-only categories (peak spend 0) sort last and fold in. */
+ * then name. Income-only categories other than Income (peak spend 0)
+ * sort last and fold in. */
 function flowStackPlan(byCategory) {
   const stats = new Map(); // category -> {peak, total} spend
   for (const r of byCategory || []) {
@@ -431,6 +441,9 @@ function flowStackPlan(byCategory) {
                     b[1].total - a[1].total ||
                     a[0].localeCompare(b[0]));
   const keep = ranked.slice(0, FLOW_MAX_CATEGORIES).map(e => e[0]);
+  if (stats.has(INCOME_CATEGORY) && !keep.includes(INCOME_CATEGORY)) {
+    keep.push(INCOME_CATEGORY); // income is always spelled out
+  }
   const keepSet = new Set(keep);
   const merged = [...stats.keys()].filter(c => !keepSet.has(c));
   return { keep, merged };
