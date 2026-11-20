@@ -353,10 +353,15 @@ def overrides(limit: int = 200, include_uncategorized: bool = False,
     CSV import; those have ``set_by = "uncategorized"`` (still
     uncategorized).
 
-    Filtering and sorting run in SQL over the full history — ``LIMIT``
-    is applied after them, so a filter can never be applied to a
-    truncated page. ``set_by`` filters to one of all / manual / llm /
-    rule / uncategorized; ``sort_by`` is date / description / amount
+    Without ``q`` the rows are the section's base set above. With a
+    search and ``set_by=all`` the search scans the FULL history —
+    including rows that only carry the bank's CSV category and are not
+    listed by default; those have ``set_by = "csv"`` (badge "bank").
+    Chip-scoped searches keep their provenance scope. Filtering and
+    sorting run in SQL over the full history — ``LIMIT`` is applied
+    after them, so a filter can never be applied to a truncated page.
+    ``set_by`` filters to one of all / manual / llm / rule /
+    uncategorized; ``sort_by`` is date / description / amount
     with ``sort_dir`` asc or desc (defaults: date desc, description
     asc, amount desc); ``q`` is a case-insensitive substring on the
     whitespace-normalized description (the rule-matching preview).

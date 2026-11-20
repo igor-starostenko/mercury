@@ -130,6 +130,10 @@ th.sortable .sort-ind { margin-left: 4px; font-size: 8px; letter-spacing: 0; }
 .badge.src-llm { background: rgba(79, 140, 255, .16); color: var(--accent); }
 .badge.src-rule { background: rgba(255, 193, 77, .14); color: #ffc14d; }
 .badge.src-uncategorized { background: rgba(138, 144, 162, .16); color: var(--muted); }
+/* Bank's CSV category: rows surfaced by a search that don't show in the
+ * list by default (no override, no rule match). Neutral grey like
+ * "pending", but a distinct shade — nobody re-categorized these. */
+.badge.src-csv { background: rgba(138, 144, 162, .10); color: var(--muted); }
 /* Reserved "Ignored" category: rows stay visible but dimmed, with a tag
  * explaining they are out of every total. */
 .txn-ignored td { opacity: .55; }
