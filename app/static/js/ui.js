@@ -653,7 +653,8 @@ function makeFlowChart(canvas, cfg) {
 /* ------------------------------------------------------------ category table */
 /* Rendered into a container:
  *   container: element (use a .panel.tight wrapper)
- *   catData:   [{category, spend, n}] from /api/categories
+ *   catData:   [{category, spend, refunds, net, n}] from /api/categories —
+ *              net = spend − refunds; net < 0 renders green with a + sign
  *   scope:     {} | {year} | {month} — query scope for drill-downs
  */
 async function renderCategoryTable(container, catData, scope) {
@@ -661,22 +662,27 @@ async function renderCategoryTable(container, catData, scope) {
     container.innerHTML = '<p class="empty">No spending in this scope.</p>';
     return;
   }
-  const total = catData.reduce((a, d) => a + d.spend, 0) || 1;
+  const total = catData.reduce((a, d) => a + Math.max(0, d.net), 0) || 1;
   container.innerHTML = `
     <table class="cat-table">
       <thead><tr>
         <th style="width:28px"></th><th>Category</th><th class="num">Txns</th>
-        <th class="num">Spent</th><th style="width:24%">Share</th>
+        <th class="num" title="Net = spend − refunds. Green = net credit (refunds exceeded spend).">Net</th>
+        <th style="width:24%">Share</th>
       </tr></thead>
       <tbody>${catData.map((d, i) => {
         const color = CAT_COLORS[d.category] || '#57606f';
-        const pct = (d.spend / total * 100).toFixed(1);
+        const net = d.net;
+        const pct = (Math.max(0, net) / total * 100).toFixed(1);
+        const netCell = net < 0
+          ? `<td class="num pos">+${fmtMoney(-net)}</td>`
+          : `<td class="num">${fmtMoney(net)}</td>`;
         return `
         <tr class="drill-row" data-i="${i}" data-cat="${esc(d.category)}">
           <td><span class="chev">▶</span></td>
           <td><span class="dot" style="background:${color}"></span>${esc(d.category)}</td>
           <td class="num">${d.n}</td>
-          <td class="num">${fmtMoney(d.spend)}</td>
+          ${netCell}
           <td><div class="share-bar"><i style="width:${pct}%;background:${color}"></i></div></td>
         </tr>
         <tr class="detail-row" id="det-${i}" style="display:none">
