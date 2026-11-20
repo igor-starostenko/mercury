@@ -346,11 +346,14 @@ async function runClassify() {
  * The choice is persisted in localStorage per chart (modeKey), so it
  * survives data re-renders and page reloads.
  */
-const FLOW_MAX_CATEGORIES = 8; // per-bucket top N; a category is spelled
-                               // out if it makes the top N of ANY bucket
-                               // in the range, the rest folds into one
-                               // "All other" segment
-const ALL_OTHER = 'All other';
+const FLOW_MAX_CATEGORIES = 8; // at most N category bars: the top N by max
+                               // single-bucket spend get spelled out, the
+                               // rest folds into one "All other" segment
+const ALL_OTHER = 'All other'; // aggregate bar name — "Other" is a REAL
+                               // category, so the two must not collide
+const OTHER_CATEGORY = 'Other'; // standard category (see CAT_COLORS); it
+                                // always aggregates into ALL_OTHER, never
+                                // takes a top-N slot of its own
 
 function flowMode(key) {
   try {
@@ -404,34 +407,32 @@ function withAlpha(color, a) {
   return color; // hashed hsl fallback: no easy alpha conversion
 }
 
-/* Stacked-view plan: the top FLOW_MAX_CATEGORIES are selected PER BUCKET
- * by each bucket's own spend + income, and `keep` is the UNION across all
- * buckets — so a category that spikes in one month (e.g. tuition) is
- * spelled out in that month's bar instead of being buried in "All other"
- * by the all-range totals. `keep` is ordered by all-range total volume
- * (name as tiebreak), so the dataset/legend order is deterministic and
- * the stack never reorders between renders. Everything outside the union
- * folds into "All other". */
+/* Stacked-view plan: only the top FLOW_MAX_CATEGORIES by max single-bucket
+ * spend are spelled out — the chart is capped at 8 category bars no matter
+ * how many buckets or categories the range holds (the old per-bucket union
+ * grew with the data: 16+ category rows overflowed the hover popup).
+ * The real "Other" category never takes a slot: it always aggregates into
+ * "All other" alongside everything outside the top 8 (they share the same
+ * grey, so the popup gets one aggregate row, not two). Rank is
+ * deterministic: peak single-bucket spend, then all-range spend total,
+ * then name. Income-only categories (peak spend 0) sort last and fold in. */
 function flowStackPlan(byCategory) {
-  const agg = new Map();      // category -> all-range volume (legend order)
-  const perBucket = new Map(); // key -> Map(category -> bucket volume)
+  const stats = new Map(); // category -> {peak, total} spend
   for (const r of byCategory || []) {
-    const v = (r.spend || 0) + (r.income || 0);
-    agg.set(r.category, (agg.get(r.category) || 0) + v);
-    if (!perBucket.has(r.key)) perBucket.set(r.key, new Map());
-    const b = perBucket.get(r.key);
-    b.set(r.category, (b.get(r.category) || 0) + v);
+    const s = r.spend || 0;
+    let e = stats.get(r.category);
+    if (!e) { e = { peak: 0, total: 0 }; stats.set(r.category, e); }
+    e.peak = Math.max(e.peak, s);
+    e.total += s;
   }
-  const keepSet = new Set();
-  for (const b of perBucket.values()) {
-    [...b.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))
-      .slice(0, FLOW_MAX_CATEGORIES)
-      .forEach(e => keepSet.add(e[0]));
-  }
-  const ranked = [...agg.entries()].sort((x, y) =>
-    y[1] - x[1] || x[0].localeCompare(y[0]));
-  const keep = ranked.filter(e => keepSet.has(e[0])).map(e => e[0]);
-  const merged = ranked.filter(e => !keepSet.has(e[0])).map(e => e[0]);
+  const ranked = [...stats.entries()]
+    .filter(([c]) => c !== OTHER_CATEGORY)
+    .sort((a, b) => b[1].peak - a[1].peak ||
+                    b[1].total - a[1].total ||
+                    a[0].localeCompare(b[0]));
+  const keep = ranked.slice(0, FLOW_MAX_CATEGORIES).map(e => e[0]);
+  const keepSet = new Set(keep);
+  const merged = [...stats.keys()].filter(c => !keepSet.has(c));
   return { keep, merged };
 }
 
