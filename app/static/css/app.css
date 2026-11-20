@@ -7,7 +7,7 @@
   --muted: #8a90a2;
   --accent: #4f8cff;
   --spend: #ff6b6b;
-  --income: #38c172;
+  --income: #1e8e52;
   --border: #262c3a;
   --radius: 12px;
 }
@@ -126,7 +126,7 @@ th.sortable .sort-ind { margin-left: 4px; font-size: 8px; letter-spacing: 0; }
 .pos { color: var(--income); }
 .desc { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 20px; background: var(--panel-2); color: var(--muted); }
-.badge.src-manual { background: rgba(56, 193, 114, .16); color: var(--income); }
+.badge.src-manual { background: rgba(30, 142, 82, .16); color: var(--income); }
 .badge.src-llm { background: rgba(79, 140, 255, .16); color: var(--accent); }
 .badge.src-rule { background: rgba(255, 193, 77, .14); color: #ffc14d; }
 .badge.src-uncategorized { background: rgba(138, 144, 162, .16); color: var(--muted); }

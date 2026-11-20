@@ -1,13 +1,18 @@
 /* Mercury — shared helpers: API, formatting, palette. Loaded before ui.js. */
 
 const CAT_COLORS = {
-  Groceries: '#4f8cff', Dining: '#ff9f43', Transportation: '#54a0ff',
-  Housing: '#a55eea', Utilities: '#26de81', Subscriptions: '#ff6b6b',
-  Entertainment: '#feca57', Shopping: '#48dbfb', Travel: '#1dd1a1',
-  Health: '#576574', Insurance: '#c8d6e5', Investing: '#6ab04c',
-  Income: '#38c172', Fees: '#b33939', Transfers: '#8a90a2',
-  Donations: '#e84393', Beauty: '#d63384', Education: '#2d98da', Other: '#57606f',
-  Uncategorized: '#8a90a2',
+  // Reserved families: green = money coming in (dark Income, light
+  // Investing), grey = moves that are not spending (light Other, dark
+  // Transfers). The rest are a Lab-distance-optimized spread — no two
+  // palette entries closer than ~27 ΔE* so every bar stays distinct.
+  Income: '#1e8e52', Investing: '#9ad45f',
+  Other: '#9aa3b2', Transfers: '#454c5c',
+  Groceries: '#106bc6', Dining: '#eb6600', Transportation: '#47c2ff',
+  Housing: '#953bb0', Utilities: '#c28a29', Subscriptions: '#ff8d85',
+  Entertainment: '#ccbe00', Shopping: '#39e3ef', Travel: '#1dd1a1',
+  Health: '#9d52ff', Insurance: '#9aa2ea', Fees: '#d31730',
+  Donations: '#ff0ade', Beauty: '#cc0074', Education: '#0c8599',
+  Uncategorized: '#7a7aff',
   // Reserved "Ignored" marker: deliberately muted — it is not a place
   // money went, just a row excluded from the totals.
   Ignored: '#8a90a2',
