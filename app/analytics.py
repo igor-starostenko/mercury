@@ -112,18 +112,26 @@ def flow_by_category(con: duckdb.DuckDBPyConnection,
 def spend_by_category(con: duckdb.DuckDBPyConnection,
                       year: str | None = None,
                       month: str | None = None) -> list[dict[str, Any]]:
+    """Per-category totals over the scope: spend (negative rows), refunds
+    (positive rows) and net = spend - refunds. A category appears if it has
+    any non-ignored non-zero row in scope, so refund-only categories surface
+    as net credits (net < 0). Sorted by net descending (net spend first,
+    net credits last)."""
     where, params = _date_filter(year, month)
     rows = con.execute(f"""
         SELECT
             COALESCE(category, 'Uncategorized') AS category,
-            SUM(amount) AS spend,
+            COALESCE(SUM(amount) FILTER (amount < 0), 0) AS spend,
+            COALESCE(SUM(amount) FILTER (amount > 0), 0) AS income,
             COUNT(*) AS n
         FROM effective_transactions
-        WHERE amount < 0 AND {NOT_IGNORED} {where}
+        WHERE {NOT_IGNORED} {where}
         GROUP BY 1
-        ORDER BY 2 DESC
+        HAVING COALESCE(SUM(amount) FILTER (amount != 0), 0) != 0
+        ORDER BY spend + income ASC
     """, params).fetchall()
-    return [{"category": c, "spend": round(-s, 2), "n": n} for c, s, n in rows]
+    return [{"category": c, "spend": round(-s, 2), "refunds": round(i, 2),
+             "net": round(-s - i, 2), "n": n} for c, s, i, n in rows]
 
 
 def income_by_month(con: duckdb.DuckDBPyConnection,
