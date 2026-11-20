@@ -490,6 +490,20 @@ function makeFlowChart(canvas, cfg) {
     interaction: { mode: 'index', intersect: false },
     plugins: {
       legend: { position: 'top', align: 'end',
+        // Stacked mode: a category active in BOTH spend and income has
+        // two same-label datasets (one per stack). generateLabels below
+        // shows ONE legend entry per name, but the default onClick only
+        // toggles the FIRST dataset of that name — the other side keeps
+        // rendering after "unchecking" the category. Toggle every
+        // dataset that carries the label together.
+        onClick: (evt, legendItem, legend) => {
+          const chart = legend.chart;
+          const show = !chart.isDatasetVisible(legendItem.datasetIndex);
+          chart.data.datasets.forEach((ds, i) => {
+            if (ds.label === legendItem.text) chart.setDatasetVisibility(i, show);
+          });
+          chart.update();
+        },
         labels: { color: '#8a90a2', usePointStyle: true, boxWidth: 8, boxHeight: 8,
           // Stacked mode: a category active in BOTH spend and income gets
           // two same-label datasets (one per stack) — show one legend
