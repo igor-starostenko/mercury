@@ -580,7 +580,7 @@ function makeFlowChart(canvas, cfg) {
         backgroundColor: 'rgba(255,107,107,.78)', hoverBackgroundColor: '#ff6b6b',
         borderRadius: 4, maxBarThickness: 38 },
       { label: 'Income', data: cfg.income,
-        backgroundColor: 'rgba(56,193,114,.85)', hoverBackgroundColor: '#38c172',
+        backgroundColor: 'rgba(30,142,82,.85)', hoverBackgroundColor: '#1e8e52',
         borderRadius: 4, maxBarThickness: 38 },
     ];
   } else {
@@ -606,7 +606,7 @@ function makeFlowChart(canvas, cfg) {
     });
     datasets = [];
     for (const name of names) {
-      const color = name === ALL_OTHER ? '#57606f' : catColor(name);
+      const color = name === ALL_OTHER ? CAT_COLORS[OTHER_CATEGORY] : catColor(name);
       for (const side of ['spend', 'income']) {
         const data = series(name, side);
         if (data.every(v => v === 0)) continue;
@@ -639,7 +639,7 @@ function makeFlowChart(canvas, cfg) {
     if (cfg.avgSpend) datasets.push(
       line('Spend · 12-mo avg', cfg.avgSpend, '#ff6b6b', 'avg-spend'));
     if (cfg.avgIncome) datasets.push(
-      line('Income · 12-mo avg', cfg.avgIncome, '#38c172', 'avg-income'));
+      line('Income · 12-mo avg', cfg.avgIncome, CAT_COLORS[INCOME_CATEGORY], 'avg-income'));
   }
   const chart = new Chart(canvas, {
     type: 'bar',
@@ -671,7 +671,7 @@ async function renderCategoryTable(container, catData, scope) {
         <th style="width:24%">Share</th>
       </tr></thead>
       <tbody>${catData.map((d, i) => {
-        const color = CAT_COLORS[d.category] || '#57606f';
+        const color = catColor(d.category);
         const net = d.net;
         const pct = (Math.max(0, net) / total * 100).toFixed(1);
         const netCell = net < 0
