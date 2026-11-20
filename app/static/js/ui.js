@@ -650,6 +650,94 @@ function makeFlowChart(canvas, cfg) {
   return chart;
 }
 
+/* Categories page trend chart: monthly spend stacked over EXACTLY the
+ * categories the multiselect picker chose — no top-8 folding, no
+ * "All other", no income stack, no totals/category mode toggle (the
+ * picker is the category control). Overlay line: the 12-month rolling
+ * average of the selected categories' COMBINED monthly spend. cfg:
+ *   labels:     display labels for the x axis,
+ *   keys:       'YYYY-MM' bucket keys aligned with labels,
+ *   categories: selected category names, in picker order (drives the
+ *               stack order); a name with no spend rows is skipped,
+ *   byCategory: [{key, category, spend}] rows already filtered to the
+ *               selection (no row for a (bucket, category) without
+ *               activity — the series below zero-fills),
+ *   totals:     per-key combined selected spend (aligned with keys) —
+ *               tooltip footer,
+ *   avgSpend:   trailing 12-mo average of totals (aligned, may be null
+ *               when the picker is empty).
+ */
+function makeCategoryTrendChart(canvas, cfg) {
+  // Re-renders (data changes, picker toggles) reuse the same canvas:
+  // destroy first, or Chart.js throws "Canvas is already in use".
+  const existing = Chart.getChart(canvas);
+  if (existing) existing.destroy();
+  const options = {
+    responsive: true,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      // One dataset per category + one avg line — labels are unique, so
+      // the default legend (click toggles that one dataset) is correct.
+      legend: { position: 'top', align: 'end',
+        labels: { color: '#8a90a2', usePointStyle: true, boxWidth: 8, boxHeight: 8 } },
+      tooltip: {
+        // Index mode lists every dataset at the hovered month: drop
+        // $0.00 rows (a category with no spend that month, the avg
+        // line before data starts), keep the rest.
+        filter: item => Number(item.raw) !== 0,
+        callbacks: {
+          footer: items =>
+            'Selected total: ' + fmtMoney(cfg.totals[items[0].dataIndex] || 0),
+        },
+      },
+    },
+    scales: {
+      // Bars pile: per-dataset `stack` only groups, the SCALES must be
+      // stacked too (same rule as makeFlowChart's stacked view).
+      x: { stacked: true, ticks: { color: '#8a90a2' }, grid: { display: false } },
+      y: { stacked: true, beginAtZero: true,
+        ticks: { color: '#8a90a2', callback: v => fmtAxis(v) },
+        grid: { color: '#202634' } },
+    },
+  };
+  // Zero-fill per (key, category) from the sparse rows.
+  const cell = new Map(); // key -> Map(category -> spend)
+  for (const r of cfg.byCategory) {
+    let m = cell.get(r.key);
+    if (!m) { m = new Map(); cell.set(r.key, m); }
+    m.set(r.category, (m.get(r.category) || 0) + (r.spend || 0));
+  }
+  const datasets = [];
+  for (const name of cfg.categories) {
+    const data = cfg.keys.map(k =>
+      Math.round((cell.get(k)?.get(name) || 0) * 100) / 100);
+    if (data.every(v => v === 0)) continue;
+    const color = catColor(name);
+    datasets.push({
+      label: name, data, stack: 'spend',
+      backgroundColor: withAlpha(color, .82), hoverBackgroundColor: color,
+      maxBarThickness: 60,
+    });
+  }
+  // The avg line gets its OWN stack group: on a stacked y-scale every
+  // dataset accumulates into its `${xId}.${yId}.${stack||type}` group,
+  // so sharing a group (or omitting `stack`) would draw it on top of
+  // the bars instead of from zero.
+  if (cfg.avgSpend) {
+    datasets.push({
+      label: '12-mo avg (selected)', data: cfg.avgSpend, type: 'line', stack: 'avg-line',
+      borderColor: '#ff6b6b', backgroundColor: '#ff6b6b', borderWidth: 2,
+      pointRadius: 2.5, pointHoverRadius: 4, pointBackgroundColor: '#ff6b6b',
+      tension: .3, fill: false,
+    });
+  }
+  return new Chart(canvas, {
+    type: 'bar',
+    data: { labels: cfg.labels, datasets },
+    options,
+  });
+}
+
 /* ------------------------------------------------------------ category table */
 /* Rendered into a container:
  *   container: element (use a .panel.tight wrapper)
