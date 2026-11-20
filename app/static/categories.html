@@ -39,7 +39,7 @@
         <div class="catpick-menu" id="catPickMenu" role="listbox"
              aria-multiselectable="true" aria-label="Categories in the trend chart"></div>
       </div>
-      <span class="hint">spend of the selected categories · line = 12-mo rolling average of their combined spend</span>
+      <span class="hint">spend + income of the selected categories · line = 12-mo rolling average of their combined spend</span>
     </div>
     <div class="panel" id="catTrendPanel"></div>
   </section>
@@ -212,11 +212,13 @@ $id('ovSearch').addEventListener('input', () => {
 /* Trend chart restricted to the categories the multiselect picker
  * chose. The selection persists in localStorage (mercury.catTrendSel);
  * a first visit defaults to Groceries only. Bars = per-selected-
- * category monthly spend (stacked); line = 12-month rolling average
- * of the selected categories' COMBINED spend. Data comes from
- * /api/monthly (the same all-time payload the Overview flow chart
- * uses); filtering is client-side, so toggling the picker redraws
- * instantly with no refetch.
+ * category monthly spend and income in SEPARATE stacks (each from
+ * zero — the house rule, so net-positive categories like Income plot
+ * too); line = 12-month rolling average of the selected categories'
+ * COMBINED spend (omitted when the selection carries no spend). Data
+ * comes from /api/monthly (the same all-time payload the Overview
+ * flow chart uses); filtering is client-side, so toggling the picker
+ * redraws instantly with no refetch.
  */
 const CAT_TREND_LS = 'mercury.catTrendSel';
 const CAT_TREND_DEFAULT = ['Groceries'];
@@ -234,8 +236,8 @@ function catTrendSelRaw() {
 
 /* Picker options: the standard categories minus "Ignored" (it is
  * filtered out of every aggregate, so selecting it would draw nothing)
- * plus custom rule categories that have spend in the data. Sorted
- * alphabetically. */
+ * plus any other category with activity in the data (spend or income —
+ * custom rule categories, net-positive cats). Sorted alphabetically. */
 function catTrendOptions() {
   const names = new Set(CATS.filter(c => c !== 'Ignored'));
   if (_catTrendData) for (const r of _catTrendData.byCategory) names.add(r.category);
@@ -324,19 +326,25 @@ function renderCatTrendChart() {
   }
   const keys = data.months;
   const byCat = data.byCategory.filter(r => sel.includes(r.category));
-  const totals = keys.map(k => {
+  const sumFor = side => keys.map(k => {
     let s = 0;
-    for (const r of byCat) if (r.key === k) s += r.spend || 0;
+    for (const r of byCat) if (r.key === k) s += r[side] || 0;
     return Math.round(s * 100) / 100;
   });
+  const totalsSpend = sumFor('spend');
+  const totalsIncome = sumFor('income');
   panel.innerHTML = '<canvas id="catTrendChart"></canvas>';
   makeCategoryTrendChart($id('catTrendChart'), {
     labels: keys.map(monthLabel),
     keys,
     categories: sel,
     byCategory: byCat,
-    totals,
-    avgSpend: trailingAvg(keys, totals, 12),
+    totalsSpend,
+    totalsIncome,
+    // The line is defined over spend: omit it when the selection
+    // carries no spend at all (a flat-zero line reads as broken).
+    avgSpend: totalsSpend.some(v => v !== 0)
+      ? trailingAvg(keys, totalsSpend, 12) : null,
   });
 }
 
@@ -371,7 +379,8 @@ async function renderAll() {
       ...monthly.income.map(d => d.month),
     ])].sort(),
     byCategory: (monthly.flow_by_category || []).map(r =>
-      ({ key: r.bucket, category: r.category, spend: r.spend })),
+      ({ key: r.bucket, category: r.category,
+         spend: r.spend, income: r.income })),
   };
   buildCatTrendPicker();
   renderCatTrendChart();

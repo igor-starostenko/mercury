@@ -650,22 +650,26 @@ function makeFlowChart(canvas, cfg) {
   return chart;
 }
 
-/* Categories page trend chart: monthly spend stacked over EXACTLY the
+/* Categories page trend chart: monthly flow stacked over EXACTLY the
  * categories the multiselect picker chose — no top-8 folding, no
- * "All other", no income stack, no totals/category mode toggle (the
- * picker is the category control). Overlay line: the 12-month rolling
- * average of the selected categories' COMBINED monthly spend. cfg:
+ * "All other", no totals/category mode toggle (the picker is the
+ * category control). Spend and income sit in SEPARATE stacks so each
+ * starts at zero (house rule, same as makeFlowChart's stacked view) —
+ * that is what lets net-positive categories (Income, …) plot at all.
+ * Overlay line: the 12-month rolling average of the selected
+ * categories' COMBINED monthly spend. cfg:
  *   labels:     display labels for the x axis,
  *   keys:       'YYYY-MM' bucket keys aligned with labels,
  *   categories: selected category names, in picker order (drives the
- *               stack order); a name with no spend rows is skipped,
- *   byCategory: [{key, category, spend}] rows already filtered to the
- *               selection (no row for a (bucket, category) without
- *               activity — the series below zero-fills),
- *   totals:     per-key combined selected spend (aligned with keys) —
- *               tooltip footer,
- *   avgSpend:   trailing 12-mo average of totals (aligned, may be null
- *               when the picker is empty).
+ *               stack order); a side with no activity is skipped,
+ *   byCategory: [{key, category, spend, income}] rows already filtered
+ *               to the selection (no row for a (bucket, category)
+ *               without activity — the series below zero-fill),
+ *   totalsSpend/totalsIncome: per-key selected totals (aligned with
+ *               keys) — tooltip footer,
+ *   avgSpend:   trailing 12-mo average of totalsSpend (aligned, or
+ *               null when the selection carries no spend — the line
+ *               is omitted rather than drawn flat at zero).
  */
 function makeCategoryTrendChart(canvas, cfg) {
   // Re-renders (data changes, picker toggles) reuse the same canvas:
@@ -676,18 +680,62 @@ function makeCategoryTrendChart(canvas, cfg) {
     responsive: true,
     interaction: { mode: 'index', intersect: false },
     plugins: {
-      // One dataset per category + one avg line — labels are unique, so
-      // the default legend (click toggles that one dataset) is correct.
       legend: { position: 'top', align: 'end',
-        labels: { color: '#8a90a2', usePointStyle: true, boxWidth: 8, boxHeight: 8 } },
+        // A category active in BOTH spend and income carries two
+        // same-label datasets (one per stack): the default onClick
+        // would toggle only the first — toggle every dataset with the
+        // label together (same rule as makeFlowChart).
+        onClick: (evt, legendItem, legend) => {
+          const chart = legend.chart;
+          const show = !chart.isDatasetVisible(legendItem.datasetIndex);
+          chart.data.datasets.forEach((ds, i) => {
+            if (ds.label === legendItem.text) chart.setDatasetVisibility(i, show);
+          });
+          chart.update();
+        },
+        labels: { color: '#8a90a2', usePointStyle: true, boxWidth: 8, boxHeight: 8,
+          // One legend entry per category name (the avg line has a
+          // unique label of its own).
+          generateLabels: chart => {
+            const items = Chart.defaults.plugins.legend.labels.generateLabels(chart);
+            const seen = new Set();
+            return items.filter(it => seen.has(it.text) ? false : (seen.add(it.text), true));
+          } } },
       tooltip: {
         // Index mode lists every dataset at the hovered month: drop
-        // $0.00 rows (a category with no spend that month, the avg
-        // line before data starts), keep the rest.
-        filter: item => Number(item.raw) !== 0,
+        // $0.00 rows, and fold a category present in BOTH stacks into
+        // a single row — net first, then spent/income (same policy as
+        // makeFlowChart's stacked view).
+        // NOTE: this vendored Chart.js build passes filter(item,
+        // index, dataPoints, chart) — take the array arg from
+        // whichever slot holds it.
+        filter: (item, second, third) => {
+          const dataPoints = Array.isArray(second) ? second
+            : Array.isArray(third) ? third : [];
+          if (Number(item.raw) === 0) return false;
+          const keep = dataPoints.findIndex(d =>
+            d.dataset.label === item.dataset.label && Number(d.raw) !== 0);
+          if (keep === dataPoints.indexOf(item)) return true;
+          const k = dataPoints[keep];
+          if (k) (k._sides = k._sides || {})[item.dataset.stack] = Number(item.raw);
+          return false;
+        },
         callbacks: {
+          label: c => {
+            const own = Number(c.raw);
+            const otherSide = c.dataset.stack === 'spend' ? 'income' : 'spend';
+            const stashed = c._sides && c._sides[otherSide];
+            if (stashed == null) return ' ' + c.dataset.label + ': ' + fmtMoney(own);
+            const spend = c.dataset.stack === 'spend' ? own : stashed;
+            const income = c.dataset.stack === 'income' ? own : stashed;
+            return [
+              ' ' + c.dataset.label + ': ' + fmtMoney(spend - income),
+              '   spent ' + fmtMoney(spend) + ' · income ' + fmtMoney(income),
+            ];
+          },
           footer: items =>
-            'Selected total: ' + fmtMoney(cfg.totals[items[0].dataIndex] || 0),
+            'Spend: ' + fmtMoney(cfg.totalsSpend[items[0].dataIndex] || 0) +
+            '   ·   Income: ' + fmtMoney(cfg.totalsIncome[items[0].dataIndex] || 0),
         },
       },
     },
@@ -700,24 +748,29 @@ function makeCategoryTrendChart(canvas, cfg) {
         grid: { color: '#202634' } },
     },
   };
-  // Zero-fill per (key, category) from the sparse rows.
-  const cell = new Map(); // key -> Map(category -> spend)
+  // Zero-fill per (key, category) from the sparse rows; spend and
+  // income are separate series (separate stacks, each from zero).
+  const cell = new Map(); // key -> Map(category -> [spend, income])
   for (const r of cfg.byCategory) {
     let m = cell.get(r.key);
     if (!m) { m = new Map(); cell.set(r.key, m); }
-    m.set(r.category, (m.get(r.category) || 0) + (r.spend || 0));
+    const v = m.get(r.category) || [0, 0];
+    m.set(r.category, [v[0] + (r.spend || 0), v[1] + (r.income || 0)]);
   }
   const datasets = [];
   for (const name of cfg.categories) {
-    const data = cfg.keys.map(k =>
-      Math.round((cell.get(k)?.get(name) || 0) * 100) / 100);
-    if (data.every(v => v === 0)) continue;
     const color = catColor(name);
-    datasets.push({
-      label: name, data, stack: 'spend',
-      backgroundColor: withAlpha(color, .82), hoverBackgroundColor: color,
-      maxBarThickness: 60,
-    });
+    for (const side of ['spend', 'income']) {
+      const idx = side === 'spend' ? 0 : 1;
+      const data = cfg.keys.map(k =>
+        Math.round((cell.get(k)?.get(name)?.[idx] || 0) * 100) / 100);
+      if (data.every(v => v === 0)) continue;
+      datasets.push({
+        label: name, data, stack: side,
+        backgroundColor: withAlpha(color, .82), hoverBackgroundColor: color,
+        maxBarThickness: 60,
+      });
+    }
   }
   // The avg line gets its OWN stack group: on a stacked y-scale every
   // dataset accumulates into its `${xId}.${yId}.${stack||type}` group,
