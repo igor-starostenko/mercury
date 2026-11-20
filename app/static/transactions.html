@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mercury — Transactions</title>
+<link rel="stylesheet" href="/static/css/app.css" />
+<script src="/static/js/common.js"></script>
+<script src="/static/js/ui.js"></script>
+</head>
+<body>
+<div id="site-header"></div>
+<main>
+  <div class="page-range" id="page-range"></div>
+  <div class="panel" id="emptyHint" style="display:none;margin-bottom:24px">
+    <h2 style="margin:0 0 8px;font-size:16px">No transactions yet</h2>
+    <p style="color:var(--muted);margin:0">Use <b>Manage Imports</b> in the top bar to load
+    your bank exports (Wells Fargo, Chase, Apple Card, US Bank) — and later to rename
+    or delete any import. Files are matched by filename — keep the bank's original names.</p>
+  </div>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Transaction categorization</h2>
+      <span class="badge" id="txnCount"></span>
+      <span class="badge" id="unknownCount"></span>
+      <button class="primary" id="classifyBtn" onclick="runClassify()">Classify unknown (LLM)</button>
+      <select id="setBySel" class="setby-sel" aria-label="Filter rows by who set the category">
+        <option value="all">Set by: All</option>
+        <option value="manual">Set by: You</option>
+        <option value="llm">Set by: LLM</option>
+        <option value="rule">Set by: Rule</option>
+        <option value="uncategorized">Set by: Unknown</option>
+      </select>
+      <span class="hint" id="ovHint">click a column to sort</span>
+      <input type="search" class="txn-search" id="ovSearch"
+             placeholder="Search description… (rule-match preview)"
+             aria-label="Search transactions by description">
+    </div>
+    <div class="panel tight">
+      <div id="overrides"></div>
+    </div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+<div id="modal-root"></div>
+
+<script>
+window.onDataChanged = renderAll;
+const OV_SET_BY = { manual: 'you', llm: 'LLM', rule: 'rule', csv: 'bank',
+                    unknown: 'unknown', uncategorized: 'pending' };
+const OV_LIMIT = 1000;        // browse-view window (no search): top 1000 of the filter
+const OV_SEARCH_LIMIT = 100000; // search: pull the FULL matching set — a search that
+                                // silently truncates to 1000 hides real rule matches
+const OV_BASE_HINT = 'missing CSV category or re-categorized · re-pick a category to make it yours';
+/* The Set-by filter, description search and column sort all run on the
+ * SERVER over the full history (SQL filter + sort before LIMIT). Browse
+ * (no search) shows the top OV_LIMIT rows of the section's base set; with
+ * a search term active the search scans EVERY transaction — including
+ * rows that only carry the bank's CSV category, which the list doesn't
+ * show by default (they render with the "bank" badge) — and the limit
+ * jumps to OV_SEARCH_LIMIT so every match is visible. The "X of Y shown"
+ * hint below the table is the safety net if a term ever matches more. */
+let ovRows = [];
+let ovTotal = 0;
+let ovPendingTotal = 0;
+let ovFilter = 'all';
+let ovSearch = '';
+let ovSeq = 0;
+let ovSearchTimer = null;
+
+function ovQuery() {
+  const st = $id('overrides')._sortState || { key: 'date', dir: 'desc' };
+  const q = (ovSearch || '').trim();
+  const p = new URLSearchParams({
+    limit: String(q ? OV_SEARCH_LIMIT : OV_LIMIT),
+    include_uncategorized: 'true',
+    set_by: ovFilter, sort_by: st.key, sort_dir: st.dir, q: ovSearch,
+  });
+  return '/api/overrides?' + p.toString();
+}
+async function loadOverrides() {
+  const seq = ++ovSeq;
+  let data;
+  try {
+    data = await api(ovQuery());
+  } catch (e) {
+    if (seq === ovSeq) toast('Failed to load: ' + e.message, 8000);
+    return;
+  }
+  if (seq !== ovSeq) return; // a newer filter/search/sort click superseded it
+  ovRows = data.rows;
+  ovTotal = data.total;
+  ovPendingTotal = data.uncategorized;
+  renderOverrides();
+}
+
+function renderOverrides() {
+  const el = $id('overrides');
+  if (!el._sortState) el._sortState = { key: 'date', dir: 'desc' };
+  const st = el._sortState;
+  const rows = ovRows; // already filtered + sorted by the server
+  const q = (ovSearch || '').trim();
+  const qre = q ? txnSearchRegex(q) : null;
+  const noLlm = !window.LLM_CONFIGURED;
+  $id('txnCount').textContent = ovTotal
+    + ' transaction' + (ovTotal === 1 ? '' : 's');
+  $id('unknownCount').textContent = ovPendingTotal
+    ? ovPendingTotal + ' need a category' : 'all categorized';
+  $id('classifyBtn').disabled = !ovPendingTotal || noLlm;
+  $id('classifyBtn').title = noLlm
+    ? 'LLM not configured — set both MERCURY_LLM_ENDPOINT and MERCURY_LLM_MODEL, then restart the server' : '';
+  $id('ovHint').textContent =
+    (ovTotal > rows.length
+       ? rows.length + ' of ' + ovTotal + ' shown'
+       : rows.length + ' shown')
+    + (q ? ` for “${q}”` : '')
+    + ' · click a column to sort'
+    + (ovFilter === 'all' && !q ? ' · ' + OV_BASE_HINT : '')
+    + ((st.key !== 'date' || st.dir !== 'desc') ? ' · ' + txnSortLabel(st) : '')
+    + (noLlm && ovPendingTotal ? ' · LLM not configured, Classify is disabled' : '');
+  if (!rows.length) {
+    $id('overrides').innerHTML = '<p class="empty">'
+      + (q
+        ? `No matches for “${esc(q)}”.`
+        : (ovTotal
+          ? (ovFilter === 'uncategorized' ? 'All transactions categorized. 🎉'
+                                          : 'No ' + (OV_SET_BY[ovFilter] || ovFilter) + ' transactions.')
+          : 'No categorized or pending transactions yet.'))
+      + '</p>';
+    return;
+  }
+  $id('overrides').innerHTML = `
+    <table>
+      <thead><tr>
+        ${txnSortTh('date', 'Date', null, st)}<th>Source</th>${txnSortTh('description', 'Description', null, st)}
+        <th>Category</th><th>Set by</th>${txnSortTh('amount', 'Amount', 'num', st)}
+      </tr></thead>
+      <tbody>${rows.map(t => `
+        <tr${t.ignored ? ' class="row-ignored"' : ''}>
+          <td>${esc(t.date)}</td>
+          <td>${esc(t.source)}</td>
+          <td class="desc" title="${esc(t.description)}">${highlightDesc(t.description, qre)}</td>
+          <td><select class="cat-select" data-id="${t.id}">${catOptions(t.category)}</select>${
+            t.original_category && t.original_category !== 'Uncategorized' && t.original_category !== t.category
+              ? `<span class="was-cat">was: ${esc(t.original_category)}</span>` : ''}${ruleNoteHTML(t)}</td>
+          <td><span class="badge src-${esc(t.set_by)}">${esc(OV_SET_BY[t.set_by] || t.set_by)}</span></td>
+          <td class="num ${t.amount < 0 ? 'neg' : 'pos'}">${fmtMoney(t.amount)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+  wireCategorySelects(el);
+  el._detailRender = () => loadOverrides();
+  wireTxnSort(el);
+}
+
+/* "Set by" dropdown: same scope the chip row used to offer — the value
+ * IS the server's set_by parameter, so no client-side re-filtering. */
+$id('setBySel').addEventListener('change', () => {
+  ovFilter = $id('setBySel').value;
+  loadOverrides();
+});
+/* Description search — server-side, with the same matching as category
+ * rules (see txnSearch* in js/ui.js): the rows shown are exactly the
+ * rows a rule with the typed pattern would catch, so a pattern can be
+ * tested before saving. Debounced; out-of-order responses are dropped. */
+$id('ovSearch').addEventListener('input', () => {
+  ovSearch = $id('ovSearch').value;
+  clearTimeout(ovSearchTimer);
+  ovSearchTimer = setTimeout(loadOverrides, 200);
+});
+
+async function renderAll() {
+  const summary = await api('/api/summary');
+  $id('emptyHint').style.display = summary.n_transactions ? 'none' : 'block';
+  setRangeSub(totalsSub(summary));
+  setPageRange(summary.first_date, summary.last_date);
+
+  // Merged categorization list: overrides + still-uncategorized rows.
+  // Filter/search/sort state is kept; the server filters + sorts the full
+  // history and returns the top window plus the true counts.
+  loadOverrides();
+}
+
+(async function init() {
+  const [cats, health] = await Promise.all([
+    api('/api/standard-categories'),
+    api('/api/health'),
+  ]);
+  CATS = cats;
+  window.LLM_CONFIGURED = !!health.llm_configured;
+  renderChrome('transactions');
+  try {
+    await renderAll();
+  } catch (e) {
+    toast('Failed to load: ' + e.message, 8000);
+  }
+})();
+</script>
+</body>
+</html>

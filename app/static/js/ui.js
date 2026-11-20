@@ -2,7 +2,8 @@
  *
  * Pages embed the shared chrome via:
  *   <div id="site-header"></div> ... <div id="modal-root"></div>
- * and call renderChrome('home'|'categories'|'year'|'month') before their first paint.
+ * and call renderChrome('home'|'categories'|'transactions'|'year'|'month')
+ * before their first paint.
  * After any data mutation (upload / classify / categorize) components call
  * window.onDataChanged, which each page sets to its own re-render.
  */
@@ -20,6 +21,7 @@ function renderChrome(active) {
       <nav>
         <a href="/" class="${active === 'home' ? 'active' : ''}">Overview</a>
         <a href="/categories" class="${active === 'categories' ? 'active' : ''}">Categories</a>
+        <a href="/transactions" class="${active === 'transactions' ? 'active' : ''}">Transactions</a>
         <a href="/year" class="${active === 'year' ? 'active' : ''}">Year</a>
         <a href="/month" class="${active === 'month' ? 'active' : ''}">Month</a>
       </nav>
@@ -972,17 +974,20 @@ function mountTxnTable(container, txns, opts = {}) {
 }
 function renderTxnTable(container) {
   const all = container._txns || [];
-  const rows = sortTxns(all.filter(t => txnSearchMatch(t, container._search || '')),
-                        container._sortState);
+  const rows = sortTxns(all.filter(t =>
+      txnSearchMatch(t, container._search || '') &&
+      txnSetByMatch(t, container._setBy || 'all')),
+    container._sortState);
   container._lastShown = rows.length;
   container._lastTotal = all.length;
   const q = (container._search || '').trim();
+  const by = container._setBy || 'all';
   container.innerHTML = rows.length
     ? txnTableHTML(rows, { sort: container._sortState,
                            editable: container._editable,
                            search: container._search || '' })
-    : (q
-        ? `<p class="empty">No matches for “${esc(q)}” — ${all.length} transaction${all.length === 1 ? '' : 's'} in this period hidden by the search.</p>`
+    : ((q || by !== 'all')
+        ? `<p class="empty">No matching transactions — ${all.length} transaction${all.length === 1 ? '' : 's'} in this period hidden by the ${by !== 'all' ? (q ? 'search and Set-by filter' : 'Set-by filter') : 'search'}.</p>`
         : '<p class="empty">No transactions.</p>');
   wireCategorySelects(container);
   wireTxnSort(container);
@@ -1031,6 +1036,20 @@ function txnSearchRegex(q) {
 function txnSearchMatch(row, q) {
   const nq = txnSearchNormalize(q);
   return !nq || txnSearchNormalize(row.description).includes(nq);
+}
+
+/* "Set by" dropdown filter — the search bars on the Month ("All
+ * transactions") and Transactions ("categorization") pages narrow rows
+ * by who set the row's effective category. Option values map onto the
+ * API's per-row `set_by` field; 'uncategorized' is the label for rows
+ * with nothing set (set_by 'none' from /api/transactions — no override,
+ * no rule, no CSV category). The Transactions page runs the same filter
+ * server-side via /api/overrides?set_by=, so this client-side match only
+ * serves the locally-scoped tables (Month, drill-downs). */
+const TXN_SET_BY = { manual: 'manual', llm: 'llm', rule: 'rule',
+                     csv: 'csv', uncategorized: 'none' };
+function txnSetByMatch(row, sel) {
+  return sel === 'all' || row.set_by === TXN_SET_BY[sel];
 }
 
 function highlightDesc(text, re) {
