@@ -30,10 +30,9 @@
       <h2>Find transactions</h2>
       <span class="badge" id="ovShownCount" aria-live="polite"></span>
       <button class="primary" id="classifyBtn" onclick="runClassify()">Classify unknown (LLM)</button>
-      <!-- Shared hint (ui.js txnSearchHint): idle -> sort nudge; while a
-           search is active the badge above already reports the
-           narrowing, so the hint stays empty. -->
-      <span class="hint" id="ovHint">click a column to sort</span>
+      <!-- Shared hint (ui.js txnSearchHint): empty unless a non-default
+           sort direction or an extra note is active. -->
+      <span class="hint" id="ovHint"></span>
     </div>
     <!-- Monthly bar chart — its OWN panel above the search (sr1us).
          Mirrors the rows the search is showing right now. Space is
