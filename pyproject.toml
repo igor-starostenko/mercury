@@ -11,6 +11,14 @@ dependencies = [
     "python-multipart>=0.0.33",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=9.2",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 [tool.uv]
 # Run as `python -m app.main` from the repo root; do not install the app as a package.
 package = false
