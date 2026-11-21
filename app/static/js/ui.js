@@ -80,15 +80,14 @@ function renderChrome(active) {
 }
 
 /* ------------------------------------------------------------- color schemes
- * The three palettes sr1us wants to evaluate (2026-11-20), 4 colors each.
- * Role mapping per palette (page bg / panel / text / accent):
- *   frost      F8FAFC page, D9EAFD panels, BCCCDC controls, 9AA6B2 accent
- *   terracotta EDDCC6 page, FFF4EA panels, BF4646 text, 7EACB5 accent
- *   ember      BFC9D1 page, EAEFEF panels, 25343F text, FF9B51 accent
+ * Eight palettes for sr1us to evaluate (2026-11-20/21), 4 colors each —
+ * the swatch order is the palette as given (bg / panel / accent / text).
+ * Ember stays the default (kept after the 2026-11-20 evaluation); the
+ * five added on 2026-11-21 are Clay, Harbor, Plum, Tide, Onyx — Plum,
+ * Tide and Onyx are dark schemes (app.css flips color-scheme for them).
  * The active id lives in localStorage (mercury.theme); each page's head
- * script applies it before first paint (no flash of default). Ember is
- * the default — no attribute, and picking it removes the saved value
- * (sr1us evaluated all three on 2026-11-20 and kept Ember).
+ * script applies it before first paint (no flash of default). Picking
+ * the default (Ember) removes the attribute and the saved value.
  * Switching reloads so charts and canvas redraws pick up the new tokens.
  * Category colors (CAT_COLORS in common.js) are separate and don't follow. */
 const THEMES = {
@@ -98,6 +97,16 @@ const THEMES = {
                 colors: ['#F8FAFC', '#D9EAFD', '#BCCCDC', '#9AA6B2'] },
   terracotta: { label: 'Terracotta',
                 colors: ['#BF4646', '#EDDCC6', '#FFF4EA', '#7EACB5'] },
+  clay:       { label: 'Clay',
+                colors: ['#EEEDEB', '#E0CCBE', '#747264', '#3C3633'] },
+  harbor:     { label: 'Harbor',
+                colors: ['#F0F0F0', '#213555', '#4F709C', '#E5D283'] },
+  plum:       { label: 'Plum',
+                colors: ['#352F44', '#5C5470', '#B9B4C7', '#FAF0E6'] },
+  tide:       { label: 'Tide',
+                colors: ['#27374D', '#526D82', '#9DB2BF', '#DDE6ED'] },
+  onyx:       { label: 'Onyx',
+                colors: ['#393646', '#4F4557', '#6D5D6E', '#F4EEE0'] },
 };
 const THEME_KEY = 'mercury.theme';
 

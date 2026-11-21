@@ -1,14 +1,18 @@
 /* Mercury — shared dashboard styles */
-/* Color schemes (sr1us, 2026-11-20): three palettes, switchable from the
- * header "Theme" popup and persisted in localStorage (mercury.theme).
+/* Color schemes (sr1us, 2026-11-20/21): eight palettes, switchable from
+ * the header "Theme" popup and persisted in localStorage (mercury.theme).
  * Each page's head script applies the saved scheme before first paint
  * (no flash); switching reloads so charts redraw from the new tokens.
- * Ember is the default (no data-theme attribute) — sr1us evaluated all
- * three on 2026-11-20 and kept Ember. Every token derives
- * from the four palette colors; where a palette color is too light for
- * body text (Frost's steel 9AA6B2), --text is a darkened shade of the
- * same hue. Category colors and the spend/income semantics are separate
- * (CAT_COLORS in common.js) and do not follow the scheme. */
+ * Ember is the default (no data-theme attribute) — sr1us evaluated the
+ * first three on 2026-11-20 and kept Ember; five more (Clay, Harbor,
+ * Plum, Tide, Onyx) were added on 2026-11-21 for evaluation. Every token
+ * derives from the four palette colors; where a palette color is too
+ * light for body text (Frost's steel 9AA6B2, Onyx's mauve 6D5D6E), the
+ * text/muted tokens are shifted shades of the same hue. The three dark
+ * schemes (plum, tide, onyx) flip color-scheme for form controls and use
+ * lighter spend/income/amber tokens. Category colors and the spend/
+ * income semantics are separate (CAT_COLORS in common.js) and do not
+ * follow the scheme. */
 :root {
   /* Ember (default) — EAEFEF / BFC9D1 / 25343F / FF9B51 */
   --bg: #bfc9d1;
@@ -79,8 +83,102 @@
   --detail-row: color-mix(in srgb, #EAEFEF 92%, #25343f 6%);
   --shadow: color-mix(in srgb, #25343f 26%, transparent);
 }
+[data-theme="clay"] {
+  /* Clay — EEEDEB / E0CCBE / 747264 / 3C3633 */
+  --bg: #eeeceb;
+  --panel: #e0ccbe;
+  --panel-2: color-mix(in srgb, #e0ccbe 88%, #747264 12%);
+  --text: #3c3633;
+  --muted: #747264;
+  --accent: #747264;
+  --on-accent: #eeeceb;
+  --spend: #ff6b6b;
+  --income: #1e8e52;
+  --border: color-mix(in srgb, #e0ccbe 78%, #747264 22%);
+  --grid: color-mix(in srgb, #e0ccbe 78%, #747264 22%);
+  --amber: #6d5a12;
+  --header-bg: color-mix(in srgb, #eeeceb 92%, transparent);
+  --detail-row: color-mix(in srgb, #e0ccbe 92%, #3c3633 6%);
+  --shadow: color-mix(in srgb, #3c3633 24%, transparent);
+}
+[data-theme="harbor"] {
+  /* Harbor — F0F0F0 / 213555 / 4F709C / E5D283 (gold shows in the menu
+   * swatch; --amber is its darkened shade for light backgrounds) */
+  --bg: #f0f0f0;
+  --panel: color-mix(in srgb, #f0f0f0 15%, #ffffff 85%);
+  --panel-2: color-mix(in srgb, #ffffff 80%, #4f709c 12%);
+  --text: #213555;
+  --muted: #4f709c;
+  --accent: #4f709c;
+  --on-accent: #f0f0f0;
+  --spend: #ff6b6b;
+  --income: #1e8e52;
+  --border: color-mix(in srgb, #f0f0f0 70%, #4f709c 22%);
+  --grid: color-mix(in srgb, #f0f0f0 70%, #4f709c 22%);
+  --amber: #7d6a1f;
+  --header-bg: color-mix(in srgb, #f0f0f0 92%, transparent);
+  --detail-row: color-mix(in srgb, #f8f8f8 94%, #213555 5%);
+  --shadow: color-mix(in srgb, #213555 22%, transparent);
+}
+[data-theme="plum"] {
+  /* Plum — 352F44 / 5C5470 / B9B4C7 / FAF0E6 (dark) */
+  --bg: #352f44;
+  --panel: color-mix(in srgb, #352f44 40%, #5c5470 60%);
+  --panel-2: color-mix(in srgb, #5c5470 82%, #b9b4c7 18%);
+  --text: #faf0e6;
+  --muted: #b9b4c7;
+  --accent: #b9b4c7;
+  --on-accent: #352f44;
+  --spend: #ff8f8f;
+  --income: #55c08a;
+  --border: color-mix(in srgb, #5c5470 78%, #b9b4c7 22%);
+  --grid: color-mix(in srgb, #5c5470 78%, #b9b4c7 22%);
+  --amber: #e9c98a;
+  --header-bg: color-mix(in srgb, #352f44 92%, transparent);
+  --detail-row: color-mix(in srgb, #4c455e 92%, #faf0e6 4%);
+  --shadow: color-mix(in srgb, #14101f 55%, transparent);
+}
+[data-theme="tide"] {
+  /* Tide — 27374D / 526D82 / 9DB2BF / DDE6ED (dark) */
+  --bg: #27374d;
+  --panel: color-mix(in srgb, #27374d 40%, #526d82 60%);
+  --panel-2: color-mix(in srgb, #526d82 82%, #9db2bf 18%);
+  --text: #dde6ed;
+  --muted: #9db2bf;
+  --accent: #9db2bf;
+  --on-accent: #27374d;
+  --spend: #ff8f8f;
+  --income: #55c08a;
+  --border: color-mix(in srgb, #526d82 78%, #9db2bf 22%);
+  --grid: color-mix(in srgb, #526d82 78%, #9db2bf 22%);
+  --amber: #e9c98a;
+  --header-bg: color-mix(in srgb, #27374d 92%, transparent);
+  --detail-row: color-mix(in srgb, #41576c 92%, #dde6ed 4%);
+  --shadow: color-mix(in srgb, #0d141f 55%, transparent);
+}
+[data-theme="onyx"] {
+  /* Onyx — 393646 / 4F4557 / 6D5D6E / F4EEE0 (dark) */
+  --bg: #393646;
+  --panel: color-mix(in srgb, #393646 40%, #4f4557 60%);
+  --panel-2: color-mix(in srgb, #4f4557 82%, #6d5d6e 18%);
+  --text: #f4eee0;
+  --muted: #9c93a6;
+  --accent: #6d5d6e;
+  --on-accent: #f4eee0;
+  --spend: #ff8f8f;
+  --income: #55c08a;
+  --border: color-mix(in srgb, #4f4557 78%, #6d5d6e 22%);
+  --grid: color-mix(in srgb, #4f4557 78%, #6d5d6e 22%);
+  --amber: #e9c98a;
+  --header-bg: color-mix(in srgb, #393646 92%, transparent);
+  --detail-row: color-mix(in srgb, #463f50 92%, #f4eee0 4%);
+  --shadow: color-mix(in srgb, #161320 55%, transparent);
+}
 * { box-sizing: border-box; }
 html { color-scheme: light; }
+html[data-theme="plum"], html[data-theme="tide"], html[data-theme="onyx"] {
+  color-scheme: dark;
+}
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
