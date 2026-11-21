@@ -10,6 +10,15 @@
 
 let CATS = []; // standard category names, filled by each page's init
 
+/* Theme-aware color for canvas charts: read the active scheme's token at
+ * build time. The scheme itself is applied pre-paint (head script) and a
+ * switch reloads the page, so every chart is always drawn with the
+ * current tokens — categories keep their own fixed palette (CAT_COLORS). */
+function cssColor(name, fallback) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+
 /* ------------------------------------------------------------- page chrome */
 function renderChrome(active) {
   $id('site-header').innerHTML = `
@@ -26,11 +35,20 @@ function renderChrome(active) {
         <a href="/month" class="${active === 'month' ? 'active' : ''}">Month</a>
       </nav>
       <div class="header-actions">
+        <div class="themepick" id="themePick">
+          <button class="themepick-btn" id="themeBtn" onclick="toggleThemeMenu(event)"
+                  aria-haspopup="true" aria-expanded="false" title="Color scheme">
+            <span class="themepick-swatch" id="themeSwatch"></span>Theme
+          </button>
+          <div class="themepick-menu" id="themeMenu" role="menu" aria-label="Color scheme"></div>
+        </div>
         <button class="primary" onclick="openImports()">Manage Imports</button>
         <input type="file" id="filePick" accept=".csv,.txt" multiple hidden onchange="uploadFiles(this.files)">
         <input type="file" id="folderPick" webkitdirectory hidden onchange="uploadFiles(this.files)">
       </div>
     </header>`;
+  paintThemeSwatch();
+  wireThemeMenu();
   $id('modal-root').innerHTML = `
     <div class="modal-backdrop" id="importsModal" onclick="if(event.target===this)closeImports()">
       <div class="modal" style="min-width:660px">
@@ -59,6 +77,104 @@ function renderChrome(active) {
         </div>
       </div>
     </div>`;
+}
+
+/* ------------------------------------------------------------- color schemes
+ * The three palettes sr1us wants to evaluate (2026-11-20), 4 colors each.
+ * Role mapping per palette (page bg / panel / text / accent):
+ *   frost      F8FAFC page, D9EAFD panels, BCCCDC controls, 9AA6B2 accent
+ *   terracotta EDDCC6 page, FFF4EA panels, BF4646 text, 7EACB5 accent
+ *   ember      BFC9D1 page, EAEFEF panels, 25343F text, FF9B51 accent
+ * The active id lives in localStorage (mercury.theme); each page's head
+ * script applies it before first paint (no flash of default). Frost is
+ * the default — no attribute, and picking it removes the saved value.
+ * Switching reloads so charts and canvas redraws pick up the new tokens.
+ * Category colors (CAT_COLORS in common.js) are separate and don't follow. */
+const THEMES = {
+  frost:      { label: 'Frost', default: true,
+                colors: ['#F8FAFC', '#D9EAFD', '#BCCCDC', '#9AA6B2'] },
+  terracotta: { label: 'Terracotta',
+                colors: ['#BF4646', '#EDDCC6', '#FFF4EA', '#7EACB5'] },
+  ember:      { label: 'Ember',
+                colors: ['#EAEFEF', '#BFC9D1', '#25343F', '#FF9B51'] },
+};
+const THEME_KEY = 'mercury.theme';
+
+function currentTheme() {
+  let t = '';
+  try { t = (localStorage.getItem(THEME_KEY) || '').toLowerCase(); } catch (e) {}
+  return THEMES[t] ? t : 'frost';
+}
+
+function applyTheme(id) {
+  if (!THEMES[id]) id = 'frost';
+  const root = document.documentElement;
+  try {
+    if (id === 'frost') {
+      root.removeAttribute('data-theme');
+      localStorage.removeItem(THEME_KEY);
+    } else {
+      root.setAttribute('data-theme', id);
+      localStorage.setItem(THEME_KEY, id);
+    }
+  } catch (e) {} // private mode: scheme still applies for this page load
+  paintThemeSwatch();
+}
+
+function paintThemeSwatch() {
+  const sw = $id('themeSwatch');
+  if (!sw) return;
+  sw.innerHTML = THEMES[currentTheme()].colors
+    .map(c => `<i style="background:${c}"></i>`).join('');
+}
+
+function themeMenuHTML() {
+  const cur = currentTheme();
+  const items = Object.entries(THEMES).map(([id, t]) => `
+    <div class="themepick-item${id === cur ? ' active' : ''}" role="menuitemradio"
+         aria-checked="${id === cur}" onclick="pickTheme('${id}')">
+      <span class="themepick-swatch">${t.colors.map(c => `<i style="background:${c}"></i>`).join('')}</span>
+      <span class="themepick-name">${t.label}${t.default ? ' <span class="hint">· default</span>' : ''}</span>
+      <span class="themepick-check">${id === cur ? '✓' : ''}</span>
+    </div>`).join('');
+  return `<div class="themepick-head">Color scheme</div>${items}`;
+}
+
+function toggleThemeMenu(ev) {
+  ev && ev.stopPropagation();
+  const menu = $id('themeMenu'), btn = $id('themeBtn');
+  if (!menu || !btn) return;
+  const open = menu.classList.toggle('open');
+  if (open) menu.innerHTML = themeMenuHTML();
+  btn.setAttribute('aria-expanded', String(open));
+}
+
+function pickTheme(id) {
+  applyTheme(id);
+  location.reload(); // redraw charts + canvases from the new tokens
+}
+
+/* Close-on-outside-click / Escape. renderChrome rebuilds the header DOM on
+ * every page, so the document-level listeners are attached only once. */
+let _themeMenuWired = false;
+function wireThemeMenu() {
+  if (_themeMenuWired) return;
+  _themeMenuWired = true;
+  document.addEventListener('click', e => {
+    const pick = $id('themePick'), menu = $id('themeMenu');
+    if (pick && menu && menu.classList.contains('open') && !pick.contains(e.target)) {
+      menu.classList.remove('open');
+      $id('themeBtn').setAttribute('aria-expanded', 'false');
+    }
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    const menu = $id('themeMenu');
+    if (menu && menu.classList.contains('open')) {
+      menu.classList.remove('open');
+      $id('themeBtn').setAttribute('aria-expanded', 'false');
+    }
+  });
 }
 
 function setRangeSub(text) {
@@ -519,7 +635,7 @@ function makeFlowChart(canvas, cfg) {
           });
           chart.update();
         },
-        labels: { color: '#8a90a2', usePointStyle: true, boxWidth: 8, boxHeight: 8,
+        labels: { color: cssColor('--muted'), usePointStyle: true, boxWidth: 8, boxHeight: 8,
           // Stacked mode: a category active in BOTH spend and income gets
           // two same-label datasets (one per stack) — show one legend
           // entry per name (toggle still hits the first dataset).
@@ -567,10 +683,10 @@ function makeFlowChart(canvas, cfg) {
       },
     },
     scales: {
-      x: { ticks: { color: '#8a90a2' }, grid: { display: false } },
+      x: { ticks: { color: cssColor('--muted') }, grid: { display: false } },
       y: { beginAtZero: true,
-        ticks: { color: '#8a90a2', callback: v => fmtAxis(v) },
-        grid: { color: '#202634' } },
+        ticks: { color: cssColor('--muted'), callback: v => fmtAxis(v) },
+        grid: { color: cssColor('--grid') } },
     },
   };
   const stacked = flowMode(cfg.modeKey) === 'category' &&
@@ -695,7 +811,7 @@ function makeCategoryTrendChart(canvas, cfg) {
           });
           chart.update();
         },
-        labels: { color: '#8a90a2', usePointStyle: true, boxWidth: 8, boxHeight: 8,
+        labels: { color: cssColor('--muted'), usePointStyle: true, boxWidth: 8, boxHeight: 8,
           // One legend entry per category name (the avg line has a
           // unique label of its own).
           generateLabels: chart => {
@@ -744,10 +860,10 @@ function makeCategoryTrendChart(canvas, cfg) {
     scales: {
       // Bars pile: per-dataset `stack` only groups, the SCALES must be
       // stacked too (same rule as makeFlowChart's stacked view).
-      x: { stacked: true, ticks: { color: '#8a90a2' }, grid: { display: false } },
+      x: { stacked: true, ticks: { color: cssColor('--muted') }, grid: { display: false } },
       y: { stacked: true, beginAtZero: true,
-        ticks: { color: '#8a90a2', callback: v => fmtAxis(v) },
-        grid: { color: '#202634' } },
+        ticks: { color: cssColor('--muted'), callback: v => fmtAxis(v) },
+        grid: { color: cssColor('--grid') } },
     },
   };
   // Zero-fill per (key, category) from the sparse rows; spend and

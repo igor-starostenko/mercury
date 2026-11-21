@@ -1,18 +1,66 @@
 /* Mercury — shared dashboard styles */
+/* Color schemes (sr1us, 2026-11-20): three palettes, switchable from the
+ * header "Theme" popup and persisted in localStorage (mercury.theme).
+ * Each page's head script applies the saved scheme before first paint
+ * (no flash); switching reloads so charts redraw from the new tokens.
+ * Frost is the default (no data-theme attribute). Every token derives
+ * from the four palette colors; where a palette color is too light for
+ * body text (Frost's steel 9AA6B2), --text is a darkened shade of the
+ * same hue. Category colors and the spend/income semantics are separate
+ * (CAT_COLORS in common.js) and do not follow the scheme. */
 :root {
-  --bg: #0f1115;
-  --panel: #161a22;
-  --panel-2: #1d2330;
-  --text: #e6e8ee;
-  --muted: #8a90a2;
-  --accent: #4f8cff;
+  /* Frost (default) — F8FAFC / D9EAFD / BCCCDC / 9AA6B2 */
+  --bg: #f8fafc;
+  --panel: #d9eafd;
+  --panel-2: #bcccdc;
+  --text: #3f4b59;
+  --muted: #5c6b7c;
+  --accent: #9aa6b2;
+  --on-accent: #2f3a46;
   --spend: #ff6b6b;
   --income: #1e8e52;
-  --border: #262c3a;
+  --border: #b6c3d3;
+  --grid: #b6c3d3;
+  --amber: #755c12;
+  --header-bg: color-mix(in srgb, #f8fafc 92%, transparent);
+  --detail-row: color-mix(in srgb, #d9eafd 92%, #3f4b59 6%);
+  --shadow: color-mix(in srgb, #3f4b59 24%, transparent);
   --radius: 12px;
 }
+[data-theme="terracotta"] {
+  /* Terracotta — BF4646 / EDDCC6 / FFF4EA / 7EACB5 */
+  --bg: #eddcc6;
+  --panel: #fff4ea;
+  --panel-2: color-mix(in srgb, #fff4ea 90%, #bf4646 10%);
+  --text: #bf4646;
+  --muted: #9c5a48;
+  --accent: #7eacb5;
+  --on-accent: #25343f;
+  --border: #d9bfa4;
+  --grid: #d9bfa4;
+  --amber: #7a4a10;
+  --header-bg: color-mix(in srgb, #eddcc6 92%, transparent);
+  --detail-row: color-mix(in srgb, #fff4ea 92%, #bf4646 6%);
+  --shadow: color-mix(in srgb, #bf4646 26%, transparent);
+}
+[data-theme="ember"] {
+  /* Ember — EAEFEF / BFC9D1 / 25343F / FF9B51 */
+  --bg: #bfc9d1;
+  --panel: #EAEFEF;
+  --panel-2: color-mix(in srgb, #EAEFEF 90%, #25343f 10%);
+  --text: #25343f;
+  --muted: #5a6772;
+  --accent: #ff9b51;
+  --on-accent: #25343f;
+  --border: #a9b4bf;
+  --grid: #a9b4bf;
+  --amber: #7a4a10;
+  --header-bg: color-mix(in srgb, #bfc9d1 92%, transparent);
+  --detail-row: color-mix(in srgb, #EAEFEF 92%, #25343f 6%);
+  --shadow: color-mix(in srgb, #25343f 26%, transparent);
+}
 * { box-sizing: border-box; }
-html { color-scheme: dark; }
+html { color-scheme: light; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -25,7 +73,7 @@ header {
   position: sticky; top: 0; z-index: 50;
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
   padding: 10px 24px;
-  background: rgba(15, 17, 21, .92);
+  background: var(--header-bg);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
 }
@@ -39,9 +87,10 @@ header {
 .brand { display: flex; align-items: center; gap: 10px; flex: 0 1 140px; min-width: 132px; }
 .brand .mark {
   width: 30px; height: 30px; border-radius: 8px; flex: none;
-  background: linear-gradient(135deg, #4f8cff, #7b5cff);
+  background: linear-gradient(135deg, var(--accent),
+    color-mix(in srgb, var(--accent) 55%, var(--text) 45%));
   display: flex; align-items: center; justify-content: center;
-  font-weight: 700; font-size: 15px; color: #fff;
+  font-weight: 700; font-size: 15px; color: var(--on-accent);
 }
 .brand h1 { font-size: 16px; margin: 0; font-weight: 650; letter-spacing: .01em; }
 .brand-text { min-width: 0; }
@@ -69,7 +118,7 @@ button, select {
   padding: 7px 12px; font-size: 13px; cursor: pointer; font-family: inherit;
 }
 button:hover { border-color: var(--accent); }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 button.primary:hover { filter: brightness(1.12); }
 
 /* ----------------------------------------------------------------- layout */
@@ -127,8 +176,8 @@ th.sortable .sort-ind { margin-left: 4px; font-size: 8px; letter-spacing: 0; }
 .desc { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 20px; background: var(--panel-2); color: var(--muted); }
 .badge.src-manual { background: rgba(30, 142, 82, .16); color: var(--income); }
-.badge.src-llm { background: rgba(79, 140, 255, .16); color: var(--accent); }
-.badge.src-rule { background: rgba(255, 193, 77, .14); color: #ffc14d; }
+.badge.src-llm { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.badge.src-rule { background: color-mix(in srgb, var(--amber) 14%, transparent); color: var(--amber); }
 .badge.src-uncategorized { background: rgba(138, 144, 162, .16); color: var(--muted); }
 /* Bank's CSV category: rows surfaced by a search that don't show in the
  * list by default (no override, no rule match). Neutral grey like
@@ -151,7 +200,7 @@ th.sortable .sort-ind { margin-left: 4px; font-size: 8px; letter-spacing: 0; }
 .cat-table tr.drill-row { cursor: pointer; }
 .cat-table td.num.pos { color: var(--income); font-weight: 600; }
 .cat-table td.num.neg { color: var(--spend); font-weight: 600; }
-.cat-table tr.drill-row:hover { background: rgba(79, 140, 255, .06); }
+.cat-table tr.drill-row:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .chev { display: inline-block; width: 16px; color: var(--muted); transition: transform .15s; font-size: 11px; }
 tr.open .chev { transform: rotate(90deg); color: var(--accent); }
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; vertical-align: baseline; }
@@ -171,7 +220,7 @@ tr.open .chev { transform: rotate(90deg); color: var(--accent); }
   z-index: 40; min-width: 230px; max-height: 320px; overflow-y: auto;
   background: var(--panel); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 6px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .4); }
+  box-shadow: var(--shadow); }
 .catpick-item { display: flex; align-items: center; gap: 8px;
   padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 12.5px;
   color: var(--text); user-select: none; }
@@ -190,7 +239,7 @@ tr.open .chev { transform: rotate(90deg); color: var(--accent); }
 .share-zero { flex: none; width: 1px; height: 12px; background: var(--border); }
 .share-pct { flex: none; min-width: 34px; font-size: 10px; line-height: 1; color: var(--muted); font-variant-numeric: tabular-nums; }
 .share-side.neg .share-pct { text-align: right; }
-tr.detail-row > td { background: #12151c; padding: 0; }
+tr.detail-row > td { background: var(--detail-row); padding: 0; }
 .detail-wrap { padding: 10px 14px 14px; }
 .detail-head { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
 .detail-wrap table td, .detail-wrap table th { padding: 6px 10px; }
@@ -247,7 +296,6 @@ tr.rule-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
   background: var(--panel-2); color: var(--text);
   border: 1px solid var(--border); border-radius: 8px;
   padding: 7px 12px; font-size: 13px; font-family: inherit;
-  color-scheme: dark;
 }
 .date-ig .rule-form input[type=date]:focus { outline: none; border-color: var(--accent); }
 
@@ -278,7 +326,7 @@ tr.rule-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 }
 .setby-sel:focus { outline: none; border-color: var(--accent); }
 mark {
-  background: rgba(255, 193, 77, .22);
+  background: color-mix(in srgb, var(--amber) 22%, transparent);
   color: inherit; border-radius: 3px; padding: 0 1px;
 }
 /* Per-row rule verdict in the Category cell: which enabled rule this
@@ -289,7 +337,7 @@ mark {
   display: block; margin-top: 3px; font-size: 10.5px; color: var(--muted);
   max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.rule-note-active { color: #ffc14d; }
+.rule-note-active { color: var(--amber); }
 .setby-inline { margin-left: 6px; }
 
 /* Manage Imports panel: the tools row and the imports table. */
@@ -315,12 +363,34 @@ mark {
 }
 .imp-rename:focus { outline: none; }
 .imp-save { background: var(--accent); border: none; border-radius: 6px;
-  color: #111; padding: 5px 10px; font-size: 12px; cursor: pointer; }
+  color: var(--on-accent); padding: 5px 10px; font-size: 12px; cursor: pointer; }
 .imp-save:hover { filter: brightness(1.08); }
 .imp-cancel { background: none; border: 1px solid var(--border);
   border-radius: 6px; color: var(--muted); padding: 5px 10px;
   font-size: 12px; cursor: pointer; margin-left: 4px; }
 .imp-cancel:hover { color: var(--text); }
+
+/* ------------------------------------------------------- theme picker menu */
+/* Header popup for switching color schemes (palettes in THEMES, ui.js). */
+.themepick { position: relative; display: inline-flex; }
+.themepick-btn { display: inline-flex; align-items: center; gap: 7px; }
+.themepick-swatch { display: inline-flex; align-items: center; gap: 2px; flex: none; }
+.themepick-swatch i { display: block; width: 7px; height: 14px; border-radius: 2px;
+  border: 1px solid color-mix(in srgb, var(--text) 22%, transparent); }
+.themepick-menu { display: none; position: absolute; top: calc(100% + 6px); right: 0;
+  z-index: 40; min-width: 250px; padding: 6px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); }
+.themepick-menu.open { display: block; }
+.themepick-head { padding: 6px 10px 5px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+.themepick-item { display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 13px;
+  color: var(--text); user-select: none; }
+.themepick-item:hover, .themepick-item.active { background: var(--panel-2); }
+.themepick-item .themepick-swatch i { width: 12px; height: 16px; }
+.themepick-name { flex: 1; }
+.themepick-check { width: 14px; text-align: center; color: var(--accent); font-weight: 700; }
 
 @media (max-width: 860px) {
   header { padding: 10px 14px; }
