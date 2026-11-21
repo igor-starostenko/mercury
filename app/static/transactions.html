@@ -36,11 +36,15 @@
       <span class="hint" id="ovHint">click a column to sort</span>
     </div>
     <!-- Monthly bar chart — its OWN panel above the search (sr1us).
-         Mirrors the rows the search is showing right now; hidden
-         (display:none) until a search/filter produces rows, so the
-         section's height is unchanged when it appears. -->
-    <div class="panel" id="txnChartPanel" style="display:none">
-      <div class="chart-wrap"><canvas id="txnChart"></canvas></div>
+         Mirrors the rows the search is showing right now. Space is
+         ALWAYS reserved (fixed-height .chart-wrap — the no-jump
+         contract): the panel is never hidden, an empty search/load
+         shows the muted hint inside the same 320px wrap. -->
+    <div class="panel" id="txnChartPanel">
+      <div class="chart-wrap">
+        <canvas id="txnChart"></canvas>
+        <span class="chart-empty" id="txnChartEmpty">No data to chart</span>
+      </div>
     </div>
     <!-- Search bar (rule-builder form) INSIDE the panel above the list —
          the same layout as the Categories rule panels, and the same bar
@@ -51,14 +55,17 @@
          a keyword is typed. -->
     <div class="panel" id="txnPanel">
       <form class="rule-form" id="txnRuleForm" onsubmit="addTxnRule(event)">
+        <!-- "Set by" sits LEFT of the search input, separated from the
+             rule-builder controls by a divider (sr1us). Options come
+             from TXN_SET_BY_OPTIONS (ui.js) — shared with the Month
+             page. -->
+        <select id="setBySel" class="setby-sel" aria-label="Filter rows by who set the category">
+          <option value="all">All</option>
+        </select>
         <input id="ovSearch" type="text" maxlength="200"
                placeholder="Keyword, e.g. 'walmart'"
                aria-label="Search transactions by description">
-        <select id="setBySel" class="setby-sel" aria-label="Filter rows by who set the category">
-          <!-- Options populated from TXN_SET_BY_OPTIONS (ui.js) at load —
-               one source of truth shared with the Month page. -->
-          <option value="all">All</option>
-        </select>
+        <span class="form-sep" aria-hidden="true"></span>
         <select id="txnRuleCat" disabled aria-label="Category for the new rule"></select>
         <select id="txnScopeSource" disabled aria-label="Source scope"
                 onchange="scopeSourceChanged('txn')"></select>
@@ -128,17 +135,25 @@ async function loadOverrides() {
 /* Monthly bar chart of the rows the search/filter is showing right now —
  * same layout as makeFlowChart's totals view: one label per month, Spend
  * and Income bars side by side. Grouped from the live row set, so it
- * always mirrors the list below; hidden when the search returns nothing. */
+ * always mirrors the list below; when the search returns nothing it
+ * shows a muted hint inside the fixed-height wrap (panel never hidden —
+ * no layout shift). */
 function renderTxnChart(rows) {
-  const panel = $id('txnChartPanel');
   const canvas = $id('txnChart');
+  const empty = $id('txnChartEmpty');
   const existing = Chart.getChart(canvas);
   if (existing) existing.destroy();
   if (!rows.length) {
-    panel.style.display = 'none';
+    // The panel (and its fixed-height wrap) stays visible — no layout
+    // shift while loading or when a search matches nothing; only the
+    // hint inside the wrap swaps in.
+    empty.textContent = (ovSearch || '').trim()
+      ? 'No matching transactions'
+      : 'No data to chart';
+    empty.style.display = '';
     return;
   }
-  panel.style.display = '';
+  empty.style.display = 'none';
   // Month key -> [spend, income] over the shown rows; keys in time order.
   const months = new Map();
   for (const t of rows) {

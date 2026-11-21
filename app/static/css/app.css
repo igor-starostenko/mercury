@@ -331,6 +331,10 @@ th.sortable .sort-ind { margin-left: 4px; font-size: 8px; letter-spacing: 0; }
 }
 @keyframes skel-pulse { 50% { opacity: .45; } }
 .chart-wrap { position: relative; height: 320px; }
+/* Muted empty-state inside the fixed-height chart wrap (the panel is
+   never hidden — stable space while loading / on an empty search). */
+.chart-empty { position: absolute; inset: 0; display: flex; align-items: center;
+               justify-content: center; color: var(--muted); font-size: 13px; }
 /* Data panels: reserve baseline height while empty so the page outline
  * (section heads + boxes) is stable before their tables/forms land. */
 .panel:empty { min-height: 120px; }
@@ -405,6 +409,10 @@ tr.detail-row > td { background: var(--detail-row); padding: 0; }
 
 /* ------------------------------------------------------------ custom rules */
 .rule-form { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+/* Divider between the search half and the rule-builder half of the
+   transactions bar (sr1us): "Set by" + keyword on the left, the
+   category/scope dropdowns + Add rule on the right. */
+.rule-form .form-sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 6px; }
 .rule-form input[type=text] {
   flex: 1; min-width: 180px;
   background: var(--panel-2); color: var(--text);
