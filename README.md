@@ -1,5 +1,7 @@
 # Mercury
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **Your family's money, finally in one place — and it lives on your machine.**
 
 Mercury is a personal-finance dashboard that runs on your own computer.
@@ -24,6 +26,11 @@ Why you need to try it:
 
 The bottom line: statements in, honest charts out, nothing leaving the
 house.
+
+This is the Overview page: cash flow by month, year cards, your
+accounts, and spend by category.
+
+![Mercury Overview page](docs/screenshots/overview.png)
 
 ## How it works
 
@@ -503,3 +510,8 @@ API side: `GET /api/monthly` adds `flow_by_category`
 `GET /api/weekly?month=YYYY-MM&by_category=true` returns
 `{weeks, flow_by_category}` — the default response shape of the weekly
 endpoint is unchanged.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Use it, study it, modify it, share it:
+do anything, keep the license header.
