@@ -360,7 +360,7 @@ def overrides(limit: int = 200, include_uncategorized: bool = False,
     Chip-scoped searches keep their provenance scope. Filtering and
     sorting run in SQL over the full history — ``LIMIT`` is applied
     after them, so a filter can never be applied to a truncated page.
-    ``set_by`` filters to one of all / manual / llm / rule /
+    ``set_by`` filters to one of all / manual / llm / rule / csv /
     uncategorized; ``sort_by`` is date / description / amount
     with ``sort_dir`` asc or desc (defaults: date desc, description
     asc, amount desc); ``q`` is a case-insensitive substring on the

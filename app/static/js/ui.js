@@ -1201,6 +1201,56 @@ function txnSetByMatch(row, sel) {
   return sel === 'all' || row.set_by === TXN_SET_BY[sel];
 }
 
+/* Shared transaction-search bar: the search input + the "Set by"
+ * dropdown (default "All"), rendered INSIDE the panel above the table
+ * on BOTH the Transactions and the Month pages — the same bar layout
+ * the Categories rule panels use (form on top, list below). One options
+ * table keeps the two pages' dropdowns identical; values are the
+ * server's set_by vocabulary (/api/overrides) and map onto the local
+ * row set via txnSetByMatch for client-side tables. */
+const TXN_SET_BY_OPTIONS = [
+  ['all', 'All'],
+  ['manual', 'You'],
+  ['llm', 'LLM'],
+  ['rule', 'Rule'],
+  ['csv', 'Bank'],
+  ['uncategorized', 'Unknown'],
+];
+/* Wire the shared bar. onFilter({q, setBy}) fires on every change;
+ * input keystrokes are debounced when debounceMs is set (the
+ * server-side page refetches on each fire — the client-side page
+ * re-renders directly and leaves it at 0). onInput (optional) fires on
+ * EVERY keystroke, before the debounce, for UI that must react at once
+ * (the Transactions page enables the rule-builder controls on input). */
+function wireTxnSearchBar(input, setBySel, onFilter,
+                          { debounceMs = 0, onInput = null } = {}) {
+  const read = () => ({ q: input.value, setBy: setBySel.value || 'all' });
+  let timer = null;
+  input.addEventListener('input', () => {
+    if (onInput) onInput();
+    if (debounceMs) {
+      clearTimeout(timer);
+      timer = setTimeout(() => onFilter(read()), debounceMs);
+    } else {
+      onFilter(read());
+    }
+  });
+  setBySel.addEventListener('change', () => onFilter(read()));
+}
+/* Shared hint text for the search panels (Transactions + Month). While
+ * a search term is active the shown-count badge already reports the
+ * narrowing, so the hint carries no "for "X"" echo and no sort nudge;
+ * idle -> "click a column to sort". A non-default sort direction and an
+ * optional extra note (e.g. "LLM not configured") show in both states. */
+function txnSearchHint(q, st, note) {
+  const parts = [];
+  if (!(q || '').trim()) parts.push('click a column to sort');
+  if (st && (st.key !== 'date' || st.dir !== 'desc'))
+    parts.push(txnSortLabel(st));
+  if (note) parts.push(note);
+  return parts.join(' · ');
+}
+
 function highlightDesc(text, re) {
   const raw = text == null ? '' : String(text);
   if (!re) return esc(raw);

@@ -60,20 +60,33 @@
     <div class="section-head">
       <h2>All transactions</h2>
       <span class="badge" id="txnCount"></span>
+      <!-- Shared hint (ui.js txnSearchHint — same as the Transactions
+           page): idle -> sort nudge; while a search is active the
+           badge already reports the narrowing, so the hint stays
+           empty (non-default sort direction still shown). -->
       <span class="hint" id="txnHint">click a column to sort</span>
-      <select id="setBySel" class="setby-sel" aria-label="Filter rows by who set the category">
-        <option value="all">Set by: All</option>
-        <option value="manual">Set by: You</option>
-        <option value="llm">Set by: LLM</option>
-        <option value="rule">Set by: Rule</option>
-        <option value="csv">Set by: Bank</option>
-        <option value="uncategorized">Set by: Unknown</option>
-      </select>
-      <input type="search" class="txn-search" id="txnSearch"
-             placeholder="Search description… (rule-match preview)"
-             aria-label="Search transactions by description">
     </div>
-    <div class="panel tight" id="txnTable"></div>
+    <!-- Same search bar as the Transactions page: one form inside the
+         panel above the table (the Categories rule-panel layout), shared
+         options + wiring in ui.js (wireTxnSearchBar / TXN_SET_BY_OPTIONS).
+         The data path stays client-side — the month window is fetched
+         once and the bar filters it here. -->
+    <div class="panel" id="txnPanel">
+      <form class="rule-form" onsubmit="return false">
+        <input id="txnSearch" type="text" maxlength="200"
+               placeholder="Keyword, e.g. 'walmart'"
+               aria-label="Search transactions by description">
+        <select id="setBySel" class="setby-sel" aria-label="Filter rows by who set the category">
+          <!-- Options populated from TXN_SET_BY_OPTIONS (ui.js) at load —
+               one source of truth shared with the Transactions page. -->
+          <option value="all">All</option>
+        </select>
+      </form>
+      <!-- min-height reserves the list's space before the fetch lands
+           (the panel itself is no longer :empty — the form is a
+           permanent child — so the .panel:empty rule can't do it). -->
+      <div id="txnTable" style="min-height:120px"></div>
+    </div>
   </section>
 </main>
 <div class="toast" id="toast"></div>
@@ -87,34 +100,42 @@ let _flowCfg = null; // last chart config, so the view toggle re-draws
 window.onDataChanged = () => renderMonth(curMonth);
 
 /* Description search + "Set by" dropdown on the "All transactions"
- * table. Search matching is the category-rule semantics (case-insensitive
- * partial substring on whitespace-normalized text), so the visible rows
- * are exactly the rows a rule with the typed pattern would catch. The
- * Set-by filter narrows by who set the row's effective category
- * (txnSetByMatch in js/ui.js) — the same vocabulary as the "Set by"
- * column on the Transactions page. */
-function updateTxnHint() {
+ * table — the SAME bar as the Transactions page (shared options, wiring
+ * and hint logic in ui.js). Search matching is the category-rule
+ * semantics (case-insensitive partial substring on whitespace-normalized
+ * text), so the visible rows are exactly the rows a rule with the typed
+ * pattern would catch. The Set-by filter narrows by who set the row's
+ * effective category (txnSetByMatch) — same vocabulary as the "Set by"
+ * column. Shown-count lives in the badge next to the h2; the hint only
+ * carries the non-default sort direction (idle: the sort nudge). */
+function updateTxnChrome() {
   const table = $id('txnTable');
   const q = ($id('txnSearch').value || '').trim();
   const by = $id('setBySel').value || 'all';
-  $id('txnHint').textContent = (q || by !== 'all')
-    ? `showing ${table._lastShown ?? 0} of ${table._lastTotal ?? 0}${q ? ` for “${q}”` : ''} · click a column to sort`
-    : 'click a column to sort';
+  $id('txnCount').textContent = (q || by !== 'all')
+    ? (table._lastShown ?? 0) + ' of ' + (table._lastTotal ?? 0) + ' shown'
+    : (table._lastTotal ?? 0) + ' transactions';
+  $id('txnHint').textContent = txnSearchHint(q, table._sortState);
 }
 
-$id('txnSearch').addEventListener('input', () => {
-  const table = $id('txnTable');
-  table._search = $id('txnSearch').value;
-  renderTxnTable(table);
-  updateTxnHint();
-});
-
-$id('setBySel').addEventListener('change', () => {
-  const table = $id('txnTable');
-  table._setBy = $id('setBySel').value;
-  renderTxnTable(table);
-  updateTxnHint();
-});
+/* Shared bar wiring (ui.js wireTxnSearchBar — same as the Transactions
+ * page). Client-side: the month window is already loaded, so no debounce;
+ * the table re-renders directly. _detailRender routes header-sort clicks
+ * through the chrome update too, so the hint tracks the sort state. */
+$id('setBySel').innerHTML = TXN_SET_BY_OPTIONS.map(([v, l]) =>
+  `<option value="${v}">${l}</option>`).join('');
+wireTxnSearchBar($id('txnSearch'), $id('setBySel'),
+  ({ q, setBy }) => {
+    const table = $id('txnTable');
+    table._search = q;
+    table._setBy = setBy;
+    renderTxnTable(table);
+    updateTxnChrome();
+  });
+$id('txnTable')._detailRender = () => {
+  renderTxnTable($id('txnTable'));
+  updateTxnChrome();
+};
 
 /* Calendar weeks (Mon–Sun) overlapping the month, clipped to it.
  * Returns [{week: 'YYYY-MM-DD' (Monday), label: 'Sep 1–7', ...}]. */
@@ -177,9 +198,8 @@ async function renderMonth(month) {
 
   renderCategoryTable($id('catTable'), cats, { month });
 
-  $id('txnCount').textContent = txns.length + ' transactions';
   mountTxnTable($id('txnTable'), txns);
-  updateTxnHint();
+  updateTxnChrome();
   setPageRange(sum.first_date, sum.last_date, txnCountText(sum, 'no transactions in ' + monthLong(month)));
 }
 

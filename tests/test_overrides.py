@@ -196,3 +196,49 @@ def test_set_by_values_per_row(tmp_path):
     assert {r["id"]: r["set_by"] for r in searched["rows"]} == {4: "csv",
                                                                 5: "csv"}
     con.close()
+
+
+def test_set_by_csv_filters_bank_rows(tmp_path):
+    """The 'Bank' filter lists rows whose category is the CSV original."""
+    con = _conn(tmp_path)
+    _seed_mixed(con)
+    out = analytics.override_rows(con, limit=100000,
+                                  include_uncategorized=True,
+                                  set_by="csv")
+    assert out["total"] == 2
+    assert {r["id"] for r in out["rows"]} == {4, 5}
+    assert all(r["set_by"] == "csv" for r in out["rows"])
+    # Searches stay scoped to bank rows...
+    out = analytics.override_rows(con, limit=100000,
+                                  include_uncategorized=True,
+                                  set_by="csv", q="lyft")
+    assert {r["id"] for r in out["rows"]} == {4, 5}
+    # ...and a user-set row sharing no CSV category can't leak in.
+    out = analytics.override_rows(con, limit=100000,
+                                  include_uncategorized=True,
+                                  set_by="csv", q="starbucks")
+    assert out["total"] == 0 and out["rows"] == []
+    con.close()
+
+
+def test_set_by_manual_excludes_legacy_null_source(tmp_path):
+    """'You' means source='manual' — a legacy NULL-source override is
+    'unknown', not a user edit."""
+    con = _conn(tmp_path)
+    _seed_mixed(con)
+    out = analytics.override_rows(con, limit=100000,
+                                  include_uncategorized=True,
+                                  set_by="manual")
+    assert {r["id"] for r in out["rows"]} == {1}
+    con.close()
+
+
+def test_uncategorized_filter_independent_of_include_flag(tmp_path):
+    """'Unknown' selects pending rows on its own — the UI's include flag
+    only controls whether they also appear in an 'all' list."""
+    con = _conn(tmp_path)
+    _seed_mixed(con)
+    out = analytics.override_rows(con, limit=100000,
+                                  set_by="uncategorized")
+    assert {r["id"] for r in out["rows"]} == {6}
+    con.close()
