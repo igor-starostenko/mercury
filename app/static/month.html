@@ -73,14 +73,16 @@
          once and the bar filters it here. -->
     <div class="panel" id="txnPanel">
       <form class="rule-form" onsubmit="return false">
+        <!-- Same bar order as the Transactions page (sr1us): "Set by"
+             left of the search input. Options populated from
+             TXN_SET_BY_OPTIONS (ui.js) — one source of truth shared
+             with the Transactions page. -->
+        <select id="setBySel" class="setby-sel" aria-label="Filter rows by who set the category">
+          <option value="all">All</option>
+        </select>
         <input id="txnSearch" type="text" maxlength="200"
                placeholder="Keyword, e.g. 'walmart'"
                aria-label="Search transactions by description">
-        <select id="setBySel" class="setby-sel" aria-label="Filter rows by who set the category">
-          <!-- Options populated from TXN_SET_BY_OPTIONS (ui.js) at load —
-               one source of truth shared with the Transactions page. -->
-          <option value="all">All</option>
-        </select>
       </form>
       <!-- min-height reserves the list's space before the fetch lands
            (the panel itself is no longer :empty — the form is a
