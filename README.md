@@ -452,7 +452,7 @@ category dropdowns keep working after a re-sort.
 ### Searching transactions
 
 The **Transaction categorization** list (Transactions page) and the
-**All transactions** table (Month page) each have a search box and a
+**Transactions** table (Month page) each have a search box and a
 **Set by** dropdown on the same bar. Search uses the exact same
 matching as category rules — case-insensitive partial substring on
 whitespace-normalized description text — so the rows shown for a
