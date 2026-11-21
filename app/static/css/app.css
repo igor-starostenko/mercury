@@ -449,7 +449,7 @@ tr.rule-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 
 /* ------------------------------------------------- transaction search */
 /* Pill search bar shared by the "Transaction categorization" list
- * (Transactions page) and the "All transactions" table (Month page).
+ * (Transactions page) and the "Transactions" table (Month page).
  * Matching is identical to category rules (case-insensitive partial
  * substring on whitespace-normalized description text), so the hits for
  * a phrase are exactly the rows a rule with that pattern would catch —

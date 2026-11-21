@@ -58,7 +58,7 @@
 
   <section class="section">
     <div class="section-head">
-      <h2>All transactions</h2>
+      <h2>Transactions</h2>
       <span class="badge" id="txnCount"></span>
       <!-- Shared hint (ui.js txnSearchHint — same as the Transactions
            page): idle -> sort nudge; while a search is active the
@@ -101,7 +101,7 @@ let _flowCfg = null; // last chart config, so the view toggle re-draws
 
 window.onDataChanged = () => renderMonth(curMonth);
 
-/* Description search + "Set by" dropdown on the "All transactions"
+/* Description search + "Set by" dropdown on the "Transactions"
  * table — the SAME bar as the Transactions page (shared options, wiring
  * and hint logic in ui.js). Search matching is the category-rule
  * semantics (case-insensitive partial substring on whitespace-normalized

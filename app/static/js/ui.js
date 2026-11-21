@@ -1287,7 +1287,7 @@ function ruleNoteHTML(t) {
   return `<span class="rule-note${active ? ' rule-note-active' : ''}" title="${esc(title)}">${esc(`rule “${m.pattern}” → ${m.category}`)}${extra}</span>`;
 }
 
-/* Small provenance badge for the "All transactions" table — same
+/* Small provenance badge for the "Transactions" table (Month page) — same
  * vocabulary as the "Set by" column of the categorization list. */
 function setByBadge(t) {
   const map = { manual: 'you', llm: 'LLM', rule: 'rule' };
