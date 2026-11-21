@@ -8,6 +8,7 @@
 <script>try { var _t = localStorage.getItem('mercury.theme'); if (_t) document.documentElement.dataset.theme = _t; } catch (e) {}</script>
 <title>Mercury — Transactions</title>
 <link rel="stylesheet" href="/static/css/app.css" />
+<script src="/static/vendor/chart.umd.min.js"></script>
 <script src="/static/js/common.js"></script>
 <script src="/static/js/ui.js"></script>
 </head>
@@ -39,6 +40,10 @@
       <input type="search" class="txn-search" id="ovSearch"
              placeholder="Search description… (rule-match preview)"
              aria-label="Search transactions by description">
+    </div>
+    <div class="panel" id="txnChartPanel" style="display:none;margin-bottom:16px">
+      <div class="hint" id="txnChartNote" style="margin:0 0 8px"></div>
+      <canvas id="txnChart"></canvas>
     </div>
     <div class="panel tight">
       <div id="overrides"></div>
@@ -98,6 +103,73 @@ async function loadOverrides() {
   renderOverrides();
 }
 
+/* Bar chart of the rows the search/filter is showing right now — one bar
+ * per transaction in table order, so it always mirrors the list below.
+ * Spend and income are two null-filled datasets (house convention, same
+ * colors as makeFlowChart's totals view). Capped at TXN_CHART_MAX: a
+ * search can match tens of thousands of rows and per-bar work past a
+ * couple of thousands turns the chart into an unreadable smear. */
+const TXN_CHART_MAX = 2000;
+function renderTxnChart(rows) {
+  const panel = $id('txnChartPanel');
+  const canvas = $id('txnChart');
+  const existing = Chart.getChart(canvas);
+  if (existing) existing.destroy();
+  if (!rows.length) {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = '';
+  const shown = rows.length > TXN_CHART_MAX ? rows.slice(0, TXN_CHART_MAX) : rows;
+  $id('txnChartNote').textContent = shown.length < rows.length
+    ? 'first ' + shown.length + ' of ' + rows.length + ' transactions shown'
+    : '';
+  new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: shown.map(t => t.date),
+      datasets: [
+        { label: 'Spend', data: shown.map(t => t.amount < 0 ? t.amount : null),
+          backgroundColor: 'rgba(255,107,107,.78)', hoverBackgroundColor: '#ff6b6b',
+          borderRadius: 2, maxBarThickness: 38 },
+        { label: 'Income', data: shown.map(t => t.amount > 0 ? t.amount : null),
+          backgroundColor: 'rgba(30,142,82,.85)', hoverBackgroundColor: '#1e8e52',
+          borderRadius: 2, maxBarThickness: 38 },
+      ],
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', align: 'end',
+          labels: { color: cssColor('--muted'), usePointStyle: true, boxWidth: 8, boxHeight: 8 } },
+        tooltip: {
+          // This vendored build calls filter(item, index, dataPoints,
+          // chart) — only item is used here, so the slot order is safe.
+          filter: item => item.raw != null,
+          callbacks: {
+            // items can be empty (row amount is exactly 0 — both
+            // datasets null there, the filter drops them) — stay safe.
+            title: items => items.length ? shown[items[0].dataIndex].date : '',
+            label: c => ' ' + c.dataset.label + ': ' + fmtMoney(Number(c.raw)),
+            afterBody: items => items.length
+              ? [shown[items[0].dataIndex].source + ' · ' +
+                 (shown[items[0].dataIndex].description || '(no description)')]
+              : [],
+          },
+        },
+      },
+      scales: {
+        x: { ticks: { color: cssColor('--muted'), autoSkip: true,
+                      maxTicksLimit: 10, maxRotation: 0 },
+             grid: { display: false } },
+        y: { ticks: { color: cssColor('--muted'), callback: v => fmtAxis(v) },
+             grid: { color: cssColor('--grid') } },
+      },
+    },
+  });
+}
+
 function renderOverrides() {
   const el = $id('overrides');
   if (!el._sortState) el._sortState = { key: 'date', dir: 'desc' };
@@ -105,6 +177,7 @@ function renderOverrides() {
   const rows = ovRows; // already filtered + sorted by the server
   const q = (ovSearch || '').trim();
   const qre = q ? txnSearchRegex(q) : null;
+  renderTxnChart(rows);
   const noLlm = !window.LLM_CONFIGURED;
   $id('txnCount').textContent = ovTotal
     + ' transaction' + (ovTotal === 1 ? '' : 's');
