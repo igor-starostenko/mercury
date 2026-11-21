@@ -73,3 +73,50 @@ function toast(msg, ms = 2500) {
   clearTimeout(toast._t);
   toast._t = setTimeout(() => t.classList.remove('show'), ms);
 }
+
+/* ------------------------------------------------------------- favicon
+ * The tab/bookmark icon mirrors the .brand .mark tile: a 135° accent
+ * gradient rounded square carrying the "Hg" symbol. Each page's <head>
+ * ships the static default-scheme .ico; this swaps in a data-URI SVG
+ * built from the active scheme's computed tokens, so the tab icon
+ * matches the header tile in any color scheme. Runs in <head>, after
+ * app.css — the scheme was applied pre-paint, so the tokens are final. */
+function mixSrgb(a, b, t) { // === color-mix(in srgb, a t%, b (100-t)%)
+  const p = c => { c = c.replace('#', '');
+    if (c.length === 3) c = c.split('').map(x => x + x).join('');
+    return [0, 2, 4].map(i => parseInt(c.slice(i, i + 2), 16)); };
+  const A = p(a), B = p(b);
+  return '#' + A.map((v, i) =>
+    Math.round(v * t + B[i] * (1 - t)).toString(16).padStart(2, '0')).join('');
+}
+
+function paintFavicon() {
+  try {
+    const s = getComputedStyle(document.documentElement);
+    const accent = s.getPropertyValue('--accent').trim();
+    const text = s.getPropertyValue('--text').trim();
+    const onAccent = s.getPropertyValue('--on-accent').trim();
+    // Non-hex tokens (e.g. a future rgb()/color-mix value) -> keep .ico.
+    if (!['accent', 'text'].every(k => /^#[0-9a-f]{3,6}$/i.test(k === 'accent' ? accent : text))
+        || !/^#[0-9a-f]{3,6}$/i.test(onAccent)) return;
+    const mix = mixSrgb(accent, text, 0.55);
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+      '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">' +
+      '<stop offset="0" stop-color="' + accent + '"/>' +
+      '<stop offset="1" stop-color="' + mix + '"/></linearGradient></defs>' +
+      '<rect x="1.5" y="1.5" width="61" height="61" rx="17" fill="url(#g)"/>' +
+      '<text x="32" y="32" text-anchor="middle" dominant-baseline="central" ' +
+      'font-family="-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif" ' +
+      'font-size="27" font-weight="700" letter-spacing="0.3" fill="' + onAccent + '">Hg</text></svg>';
+    let link = document.querySelector('link[rel="icon"]');
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
+    }
+    link.type = 'image/svg+xml';
+    link.href = 'data:image/svg+xml,' + encodeURIComponent(svg);
+  } catch (e) { /* keep the static .ico */ }
+}
+paintFavicon();
