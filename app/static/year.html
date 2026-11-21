@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<!-- Apply the saved color scheme (mercury.theme) before first paint
+     so there is no flash of the default scheme. -->
+<script>try { var _t = localStorage.getItem('mercury.theme'); if (_t) document.documentElement.dataset.theme = _t; } catch (e) {}</script>
 <title>Mercury — Year</title>
 <link rel="stylesheet" href="/static/css/app.css" />
 <script src="/static/vendor/chart.umd.min.js"></script>
