@@ -30,41 +30,46 @@
       <h2>Find transactions</h2>
       <span class="badge" id="ovShownCount" aria-live="polite"></span>
       <button class="primary" id="classifyBtn" onclick="runClassify()">Classify unknown (LLM)</button>
-      <select id="setBySel" class="setby-sel" aria-label="Filter rows by who set the category">
-        <option value="all">All</option>
-        <option value="manual">You</option>
-        <option value="llm">LLM</option>
-        <option value="rule">Rule</option>
-        <option value="uncategorized">Unknown</option>
-      </select>
-      <!-- Rule-builder row, same markup as the Categories page's "Custom
-           category rules" form (ui.js renderRules). The keyword input is
-           also the description search (same live filtering + chart), and
-           "Add rule" saves the typed keyword → category (+ scope) as a
-           category rule. Dropdowns + button stay disabled until a keyword
-           is typed. -->
-      <form class="rule-form" id="txnRuleForm" onsubmit="addTxnRule(event)"
-            style="flex:1 1 100%;margin:0">
+      <!-- Shared hint (ui.js txnSearchHint): idle -> sort nudge; while a
+           search is active the badge above already reports the
+           narrowing, so the hint stays empty. -->
+      <span class="hint" id="ovHint">click a column to sort</span>
+    </div>
+    <!-- Search bar (rule-builder form) INSIDE the panel above the list —
+         the same layout as the Categories rule panels, and the same bar
+         code as the Month page (wireTxnSearchBar in ui.js). "Add rule"
+         saves the typed keyword → category (+ scope) as a category
+         rule; the keyword input is also the description search (same
+         live filtering + chart). Dropdowns + button stay disabled until
+         a keyword is typed. -->
+    <div class="panel" id="txnPanel">
+      <form class="rule-form" id="txnRuleForm" onsubmit="addTxnRule(event)">
         <input id="ovSearch" type="text" maxlength="200"
                placeholder="Keyword, e.g. 'walmart'"
                aria-label="Search transactions by description">
+        <select id="setBySel" class="setby-sel" aria-label="Filter rows by who set the category">
+          <!-- Options populated from TXN_SET_BY_OPTIONS (ui.js) at load —
+               one source of truth shared with the Month page. -->
+          <option value="all">All</option>
+        </select>
         <select id="txnRuleCat" disabled aria-label="Category for the new rule"></select>
         <select id="txnScopeSource" disabled aria-label="Source scope"
                 onchange="scopeSourceChanged('txn')"></select>
         <select id="txnScopeAccount" disabled aria-label="Account scope"></select>
         <button type="submit" id="txnAddRuleBtn" disabled>Add rule</button>
-        <span class="hint" id="ovHint">click a column to sort</span>
       </form>
-      <div class="panel" id="txnChartPanel" style="display:none;flex:1 1 100%">
-        <div style="position:relative;height:320px"><canvas id="txnChart"></canvas></div>
+      <!-- Monthly bars mirroring the rows the search is showing; hidden
+           until a search/filter produces rows. Fixed-height wrap, so
+           appearing only grows this panel downward. -->
+      <div id="txnChartPanel" style="display:none;margin-bottom:14px">
+        <div class="chart-wrap"><canvas id="txnChart"></canvas></div>
       </div>
+      <!-- id="overrides" on the list container: renderOverrides targets
+           it directly. min-height reserves the list's space before the
+           fetch lands (the panel itself is no longer :empty — the form
+           is a permanent child — so the .panel:empty rule can't do it). -->
+      <div id="overrides" style="min-height:120px"></div>
     </div>
-    <!-- id="overrides" on the panel itself (moved off the inner div): the
-         panel is the .panel mount, so while empty it gets the
-         .panel:empty min-height — the list's space is reserved before the
-         fetch lands. The inner div is gone; renderOverrides targets the
-         panel directly. -->
-    <div class="panel tight" id="overrides"></div>
   </section>
 </main>
 <div class="toast" id="toast"></div>
@@ -92,7 +97,6 @@ let ovPendingTotal = 0;
 let ovFilter = 'all';
 let ovSearch = '';
 let ovSeq = 0;
-let ovSearchTimer = null;
 
 function ovQuery() {
   const st = $id('overrides')._sortState || { key: 'date', dir: 'desc' };
@@ -200,16 +204,16 @@ function renderOverrides() {
   $id('classifyBtn').disabled = !ovPendingTotal || noLlm;
   $id('classifyBtn').title = noLlm
     ? 'LLM not configured — set both MERCURY_LLM_ENDPOINT and MERCURY_LLM_MODEL, then restart the server' : '';
-  // Shown-count moved to the badge next to the h2; the hint only carries
-  // search/sort/LLM context now.
+  // Shown-count moved to the badge next to the h2. The hint (ui.js
+  // txnSearchHint, shared with the Month page) no longer echoes the
+  // search term — while a search is active the badge already reports
+  // the narrowing, so the hint carries only a non-default sort
+  // direction and the LLM note (idle: the sort nudge).
   $id('ovShownCount').textContent = (ovTotal > rows.length
     ? rows.length + ' of ' + ovTotal + ' shown'
     : rows.length + ' shown');
-  $id('ovHint').textContent =
-    (q ? `for “${q}” · ` : '')
-    + 'click a column to sort'
-    + ((st.key !== 'date' || st.dir !== 'desc') ? ' · ' + txnSortLabel(st) : '')
-    + (noLlm && ovPendingTotal ? ' · LLM not configured, Classify is disabled' : '');
+  $id('ovHint').textContent = txnSearchHint(q, st,
+    noLlm && ovPendingTotal ? 'LLM not configured, Classify is disabled' : '');
   // The base-set purpose text is no longer shown in the header; keep it as
   // a hover hint on the count line where it applies.
   $id('ovHint').title = (ovFilter === 'all' && !q) ? OV_BASE_HINT : '';
@@ -248,12 +252,6 @@ function renderOverrides() {
   wireTxnSort(el);
 }
 
-/* "Set by" dropdown: same scope the chip row used to offer — the value
- * IS the server's set_by parameter, so no client-side re-filtering. */
-$id('setBySel').addEventListener('change', () => {
-  ovFilter = $id('setBySel').value;
-  loadOverrides();
-});
 /* The rule-creation controls (category / source / account dropdowns +
  * "Add rule") only make sense with a keyword in hand, so they stay
  * disabled while the search field is empty. */
@@ -264,16 +262,19 @@ function syncTxnRuleControls() {
   $id('txnScopeAccount').disabled = !hasQ;
   $id('txnAddRuleBtn').disabled = !hasQ;
 }
-/* Description search — server-side, with the same matching as category
- * rules (see txnSearch* in js/ui.js): the rows shown are exactly the
- * rows a rule with the typed pattern would catch, so a pattern can be
- * tested before saving. Debounced; out-of-order responses are dropped. */
-$id('ovSearch').addEventListener('input', () => {
-  ovSearch = $id('ovSearch').value;
-  syncTxnRuleControls();
-  clearTimeout(ovSearchTimer);
-  ovSearchTimer = setTimeout(loadOverrides, 200);
-});
+/* Shared search-bar wiring (ui.js wireTxnSearchBar — the same bar as
+ * the Month page). The value IS the server's set_by parameter, so no
+ * client-side re-filtering; keystrokes debounce the refetch while the
+ * rule-builder controls sync on every one. */
+$id('setBySel').innerHTML = TXN_SET_BY_OPTIONS.map(([v, l]) =>
+  `<option value="${v}">${l}</option>`).join('');
+wireTxnSearchBar($id('ovSearch'), $id('setBySel'),
+  ({ q, setBy }) => {
+    ovSearch = q;
+    ovFilter = setBy;
+    loadOverrides();
+  },
+  { debounceMs: 200, onInput: syncTxnRuleControls });
 
 /* Save the typed keyword as a category rule — same endpoint the
  * Categories page rule form uses (POST /api/rules). The keyword is kept

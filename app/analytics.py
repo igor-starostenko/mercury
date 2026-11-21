@@ -304,7 +304,7 @@ def set_category_by_key(con: duckdb.DuckDBPyConnection, key: str,
         set_category(con, txn_id, category)
 
 
-_OVERRIDE_SET_BY = ("all", "manual", "llm", "rule", "uncategorized")
+_OVERRIDE_SET_BY = ("all", "manual", "llm", "rule", "csv", "uncategorized")
 _OVERRIDE_SORTS = {
     "date": "v.txn_date",
     # Case-insensitive plain order — DuckDB 2.0 has no numeric-aware
@@ -348,7 +348,9 @@ def override_rows(con: duckdb.DuckDBPyConnection,
     — ``LIMIT`` is applied after the server-side filter and sort.
     Parameters:
 
-    - ``set_by``: 'all' (default), 'manual', 'llm', 'rule', or
+    - ``set_by``: 'all' (default), 'manual', 'llm', 'rule', 'csv'
+      (rows whose category is the bank's CSV original — no override,
+      no live rule, and the CSV carried a category) or
       'uncategorized' (rows still missing a category; the legacy
       'unknown' badge has the same NULL-source shape and is included).
     - ``sort_by``: 'date' (default), 'description' or 'amount';
@@ -376,17 +378,44 @@ def override_rows(con: duckdb.DuckDBPyConnection,
         raise ValueError("sort_dir must be 'asc' or 'desc'")
 
     q_norm = " ".join((q or "").split())
-    if q_norm and set_by == "all":
+    if set_by in ("manual", "llm", "rule"):
+        # Provenance scope: rows whose EFFECTIVE category was set by
+        # that actor (stored override for manual/llm — the view's CASE
+        # makes a stored override win, so override_source is its source;
+        # live rule match, or a legacy stored source='rule' override,
+        # for rule). Each such row is in the base set by construction,
+        # so no base-set AND is needed.
+        where: list[str] = ["v.override_source = ?"]
+        params: list[Any] = [set_by]
+    elif set_by == "csv":
+        # Bank-provided category: no stored override, no live rule, and
+        # the CSV actually carried a category (rows missing one are
+        # 'uncategorized', not bank-set).
+        where = ["v.override_source IS NULL AND o2.txn_id IS NULL"
+                 " AND NOT (t.category IS NULL OR t.category = ''"
+                 " OR t.category = 'Uncategorized')"]
+        params = []
+    elif set_by == "uncategorized":
+        # Truly pending rows: no stored override (a legacy override's
+        # NULL source is NOT "uncategorized" — it has a category), no
+        # live rule, and no CSV category. The filter selects these rows
+        # on its own — include_uncategorized only controls whether they
+        # also appear in an 'all' list.
+        where = ["v.override_source IS NULL AND o2.txn_id IS NULL"
+                 " AND (t.category IS NULL OR t.category = ''"
+                 " OR t.category = 'Uncategorized')"]
+        params = []
+    elif q_norm:
         # A typed search runs over the FULL history — not just this
         # section's base set. The list shows rows a user / the LLM / a
         # rule categorized and rows still missing a category; rows that
         # carry only the bank's CSV category are not listed by default,
         # but a search must still find them (and a rule with that
         # pattern would catch them — the search is the rule dry-run).
-        # Chip filters keep their provenance scope: searching inside
-        # "You" still means user-set rows only.
-        where: list[str] = []
-        params: list[Any] = []
+        # Provenance-scoped searches keep their scope via the branches
+        # above.
+        where = []
+        params = []
     else:
         # Base set: rows with a stored override, rows re-categorized by a
         # live rule, and (opt-in) rows still missing a category. The
@@ -396,17 +425,7 @@ def override_rows(con: duckdb.DuckDBPyConnection,
         where = ["(o2.txn_id IS NOT NULL OR v.override_source = 'rule'"
                  " OR (? = 1 AND (t.category IS NULL OR t.category = ''"
                  " OR t.category = 'Uncategorized')))"]
-        params: list[Any] = [int(include_uncategorized)]
-    if set_by in ("manual", "llm", "rule"):
-        where.append("v.override_source = ?")
-        params.append(set_by)
-    elif set_by == "uncategorized":
-        # Truly pending rows: no stored override (a legacy override's
-        # NULL source is NOT "uncategorized" — it has a category), no
-        # live rule, and no CSV category.
-        where.append("v.override_source IS NULL AND o2.txn_id IS NULL"
-                     " AND (t.category IS NULL OR t.category = ''"
-                     " OR t.category = 'Uncategorized')")
+        params = [int(include_uncategorized)]
     if q_norm:
         # Whitespace-normalized substring, exactly like the UI search
         # and the category-rule matching.
