@@ -27,10 +27,11 @@
 
   <section class="section">
     <div class="section-head">
-      <h2>Transaction categorization</h2>
-      <span class="badge" id="txnCount"></span>
-      <span class="badge" id="unknownCount"></span>
+      <h2>Transactions</h2>
       <button class="primary" id="classifyBtn" onclick="runClassify()">Classify unknown (LLM)</button>
+      <div class="panel" id="txnChartPanel" style="display:none;flex:1 1 100%">
+        <div style="position:relative;height:320px"><canvas id="txnChart"></canvas></div>
+      </div>
       <select id="setBySel" class="setby-sel" aria-label="Filter rows by who set the category">
         <option value="all">Set by: All</option>
         <option value="manual">Set by: You</option>
@@ -39,9 +40,6 @@
         <option value="uncategorized">Set by: Unknown</option>
       </select>
       <span class="hint" id="ovHint">click a column to sort</span>
-      <div class="panel" id="txnChartPanel" style="display:none;flex:1 1 100%">
-        <div style="position:relative;height:320px"><canvas id="txnChart"></canvas></div>
-      </div>
       <input type="search" class="txn-search" id="ovSearch"
              placeholder="Search description… (rule-match preview)"
              aria-label="Search transactions by description">
@@ -181,10 +179,6 @@ function renderOverrides() {
   const qre = q ? txnSearchRegex(q) : null;
   renderTxnChart(rows);
   const noLlm = !window.LLM_CONFIGURED;
-  $id('txnCount').textContent = ovTotal
-    + ' transaction' + (ovTotal === 1 ? '' : 's');
-  $id('unknownCount').textContent = ovPendingTotal
-    ? ovPendingTotal + ' need a category' : 'all categorized';
   $id('classifyBtn').disabled = !ovPendingTotal || noLlm;
   $id('classifyBtn').title = noLlm
     ? 'LLM not configured — set both MERCURY_LLM_ENDPOINT and MERCURY_LLM_MODEL, then restart the server' : '';
@@ -194,9 +188,11 @@ function renderOverrides() {
        : rows.length + ' shown')
     + (q ? ` for “${q}”` : '')
     + ' · click a column to sort'
-    + (ovFilter === 'all' && !q ? ' · ' + OV_BASE_HINT : '')
     + ((st.key !== 'date' || st.dir !== 'desc') ? ' · ' + txnSortLabel(st) : '')
     + (noLlm && ovPendingTotal ? ' · LLM not configured, Classify is disabled' : '');
+  // The base-set purpose text is no longer shown in the header; keep it as
+  // a hover hint on the count line where it applies.
+  $id('ovHint').title = (ovFilter === 'all' && !q) ? OV_BASE_HINT : '';
   if (!rows.length) {
     $id('overrides').innerHTML = '<p class="empty">'
       + (q
