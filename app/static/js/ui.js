@@ -86,31 +86,32 @@ function renderChrome(active) {
  *   terracotta EDDCC6 page, FFF4EA panels, BF4646 text, 7EACB5 accent
  *   ember      BFC9D1 page, EAEFEF panels, 25343F text, FF9B51 accent
  * The active id lives in localStorage (mercury.theme); each page's head
- * script applies it before first paint (no flash of default). Frost is
- * the default — no attribute, and picking it removes the saved value.
+ * script applies it before first paint (no flash of default). Ember is
+ * the default — no attribute, and picking it removes the saved value
+ * (sr1us evaluated all three on 2026-11-20 and kept Ember).
  * Switching reloads so charts and canvas redraws pick up the new tokens.
  * Category colors (CAT_COLORS in common.js) are separate and don't follow. */
 const THEMES = {
-  frost:      { label: 'Frost', default: true,
+  ember:      { label: 'Ember', default: true,
+                colors: ['#EAEFEF', '#BFC9D1', '#25343F', '#FF9B51'] },
+  frost:      { label: 'Frost',
                 colors: ['#F8FAFC', '#D9EAFD', '#BCCCDC', '#9AA6B2'] },
   terracotta: { label: 'Terracotta',
                 colors: ['#BF4646', '#EDDCC6', '#FFF4EA', '#7EACB5'] },
-  ember:      { label: 'Ember',
-                colors: ['#EAEFEF', '#BFC9D1', '#25343F', '#FF9B51'] },
 };
 const THEME_KEY = 'mercury.theme';
 
 function currentTheme() {
   let t = '';
   try { t = (localStorage.getItem(THEME_KEY) || '').toLowerCase(); } catch (e) {}
-  return THEMES[t] ? t : 'frost';
+  return THEMES[t] ? t : 'ember';
 }
 
 function applyTheme(id) {
-  if (!THEMES[id]) id = 'frost';
+  if (!THEMES[id]) id = 'ember';
   const root = document.documentElement;
   try {
-    if (id === 'frost') {
+    if (id === 'ember') {
       root.removeAttribute('data-theme');
       localStorage.removeItem(THEME_KEY);
     } else {

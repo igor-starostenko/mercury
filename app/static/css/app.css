@@ -3,13 +3,33 @@
  * header "Theme" popup and persisted in localStorage (mercury.theme).
  * Each page's head script applies the saved scheme before first paint
  * (no flash); switching reloads so charts redraw from the new tokens.
- * Frost is the default (no data-theme attribute). Every token derives
+ * Ember is the default (no data-theme attribute) — sr1us evaluated all
+ * three on 2026-11-20 and kept Ember. Every token derives
  * from the four palette colors; where a palette color is too light for
  * body text (Frost's steel 9AA6B2), --text is a darkened shade of the
  * same hue. Category colors and the spend/income semantics are separate
  * (CAT_COLORS in common.js) and do not follow the scheme. */
 :root {
-  /* Frost (default) — F8FAFC / D9EAFD / BCCCDC / 9AA6B2 */
+  /* Ember (default) — EAEFEF / BFC9D1 / 25343F / FF9B51 */
+  --bg: #bfc9d1;
+  --panel: #EAEFEF;
+  --panel-2: color-mix(in srgb, #EAEFEF 90%, #25343f 10%);
+  --text: #25343f;
+  --muted: #5a6772;
+  --accent: #ff9b51;
+  --on-accent: #25343f;
+  --spend: #ff6b6b;
+  --income: #1e8e52;
+  --border: #a9b4bf;
+  --grid: #a9b4bf;
+  --amber: #7a4a10;
+  --header-bg: color-mix(in srgb, #bfc9d1 92%, transparent);
+  --detail-row: color-mix(in srgb, #EAEFEF 92%, #25343f 6%);
+  --shadow: color-mix(in srgb, #25343f 26%, transparent);
+  --radius: 12px;
+}
+[data-theme="frost"] {
+  /* Frost — F8FAFC / D9EAFD / BCCCDC / 9AA6B2 */
   --bg: #f8fafc;
   --panel: #d9eafd;
   --panel-2: #bcccdc;
