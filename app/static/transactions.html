@@ -27,22 +27,37 @@
 
   <section class="section">
     <div class="section-head">
-      <h2>Transactions</h2>
+      <h2>Find transactions</h2>
+      <span class="badge" id="ovShownCount" aria-live="polite"></span>
       <button class="primary" id="classifyBtn" onclick="runClassify()">Classify unknown (LLM)</button>
+      <select id="setBySel" class="setby-sel" aria-label="Filter rows by who set the category">
+        <option value="all">All</option>
+        <option value="manual">You</option>
+        <option value="llm">LLM</option>
+        <option value="rule">Rule</option>
+        <option value="uncategorized">Unknown</option>
+      </select>
+      <!-- Rule-builder row, same markup as the Categories page's "Custom
+           category rules" form (ui.js renderRules). The keyword input is
+           also the description search (same live filtering + chart), and
+           "Add rule" saves the typed keyword → category (+ scope) as a
+           category rule. Dropdowns + button stay disabled until a keyword
+           is typed. -->
+      <form class="rule-form" id="txnRuleForm" onsubmit="addTxnRule(event)"
+            style="flex:1 1 100%;margin:0">
+        <input id="ovSearch" type="text" maxlength="200"
+               placeholder="Keyword, e.g. 'walmart'"
+               aria-label="Search transactions by description">
+        <select id="txnRuleCat" disabled aria-label="Category for the new rule"></select>
+        <select id="txnScopeSource" disabled aria-label="Source scope"
+                onchange="scopeSourceChanged('txn')"></select>
+        <select id="txnScopeAccount" disabled aria-label="Account scope"></select>
+        <button type="submit" id="txnAddRuleBtn" disabled>Add rule</button>
+        <span class="hint" id="ovHint">click a column to sort</span>
+      </form>
       <div class="panel" id="txnChartPanel" style="display:none;flex:1 1 100%">
         <div style="position:relative;height:320px"><canvas id="txnChart"></canvas></div>
       </div>
-      <select id="setBySel" class="setby-sel" aria-label="Filter rows by who set the category">
-        <option value="all">Set by: All</option>
-        <option value="manual">Set by: You</option>
-        <option value="llm">Set by: LLM</option>
-        <option value="rule">Set by: Rule</option>
-        <option value="uncategorized">Set by: Unknown</option>
-      </select>
-      <span class="hint" id="ovHint">click a column to sort</span>
-      <input type="search" class="txn-search" id="ovSearch"
-             placeholder="Search description… (rule-match preview)"
-             aria-label="Search transactions by description">
     </div>
     <div class="panel tight">
       <div id="overrides"></div>
@@ -182,12 +197,14 @@ function renderOverrides() {
   $id('classifyBtn').disabled = !ovPendingTotal || noLlm;
   $id('classifyBtn').title = noLlm
     ? 'LLM not configured — set both MERCURY_LLM_ENDPOINT and MERCURY_LLM_MODEL, then restart the server' : '';
+  // Shown-count moved to the badge next to the h2; the hint only carries
+  // search/sort/LLM context now.
+  $id('ovShownCount').textContent = (ovTotal > rows.length
+    ? rows.length + ' of ' + ovTotal + ' shown'
+    : rows.length + ' shown');
   $id('ovHint').textContent =
-    (ovTotal > rows.length
-       ? rows.length + ' of ' + ovTotal + ' shown'
-       : rows.length + ' shown')
-    + (q ? ` for “${q}”` : '')
-    + ' · click a column to sort'
+    (q ? `for “${q}” · ` : '')
+    + 'click a column to sort'
     + ((st.key !== 'date' || st.dir !== 'desc') ? ' · ' + txnSortLabel(st) : '')
     + (noLlm && ovPendingTotal ? ' · LLM not configured, Classify is disabled' : '');
   // The base-set purpose text is no longer shown in the header; keep it as
@@ -234,15 +251,52 @@ $id('setBySel').addEventListener('change', () => {
   ovFilter = $id('setBySel').value;
   loadOverrides();
 });
+/* The rule-creation controls (category / source / account dropdowns +
+ * "Add rule") only make sense with a keyword in hand, so they stay
+ * disabled while the search field is empty. */
+function syncTxnRuleControls() {
+  const hasQ = !!$id('ovSearch').value.trim();
+  $id('txnRuleCat').disabled = !hasQ;
+  $id('txnScopeSource').disabled = !hasQ;
+  $id('txnScopeAccount').disabled = !hasQ;
+  $id('txnAddRuleBtn').disabled = !hasQ;
+}
 /* Description search — server-side, with the same matching as category
  * rules (see txnSearch* in js/ui.js): the rows shown are exactly the
  * rows a rule with the typed pattern would catch, so a pattern can be
  * tested before saving. Debounced; out-of-order responses are dropped. */
 $id('ovSearch').addEventListener('input', () => {
   ovSearch = $id('ovSearch').value;
+  syncTxnRuleControls();
   clearTimeout(ovSearchTimer);
   ovSearchTimer = setTimeout(loadOverrides, 200);
 });
+
+/* Save the typed keyword as a category rule — same endpoint the
+ * Categories page rule form uses (POST /api/rules). The keyword is kept
+ * in the search box so the table below immediately shows the new rule
+ * landing on its matches (set-by badge flips to "rule"). */
+async function addTxnRule(e) {
+  e.preventDefault();
+  const pattern = $id('ovSearch').value.trim();
+  if (!pattern) return;
+  const category = $id('txnRuleCat').value;
+  const source = $id('txnScopeSource').value || null;
+  const account = $id('txnScopeAccount').value || null;
+  try {
+    await api('/api/rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pattern, category, source, account }),
+    });
+    toast('Rule added' + (source || account
+      ? ' (scoped: ' + [source, account].filter(Boolean).join(' · ') + ')'
+      : ''));
+    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  } catch (err) {
+    toast('Could not add rule: ' + err.message, 5000);
+  }
+}
 
 async function renderAll() {
   const summary = await api('/api/summary');
@@ -256,12 +310,24 @@ async function renderAll() {
 }
 
 (async function init() {
-  const [cats, health] = await Promise.all([
+  const [cats, health, accounts] = await Promise.all([
     api('/api/standard-categories'),
     api('/api/health'),
+    api('/api/accounts'),
   ]);
   CATS = cats;
   window.LLM_CONFIGURED = !!health.llm_configured;
+  // Rule-builder row: category options (same set the Categories rule form
+  // offers — Ignored has its own box there) and source/account scope from
+  // the live account list. Controls start disabled (no keyword yet).
+  _accountsCache = accounts;
+  $id('txnRuleCat').innerHTML = CATS.filter(c => c !== 'Ignored')
+    .map(c => `<option>${esc(c)}</option>`).join('');
+  $id('txnScopeSource').innerHTML =
+    _scopeOptions(_scopeSources(accounts), 'All sources');
+  $id('txnScopeAccount').innerHTML =
+    _scopeOptions(_scopeAccounts(accounts, ''), 'All accounts');
+  syncTxnRuleControls();
   renderChrome('transactions');
   try {
     await renderAll();
