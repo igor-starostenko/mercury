@@ -45,7 +45,7 @@
       </div>
       <span class="hint" id="chartHint"></span>
     </div>
-    <div class="panel"><canvas id="flowChart"></canvas></div>
+    <div class="panel"><div class="chart-wrap"><canvas id="flowChart"></canvas></div></div>
   </section>
 
   <section class="section">
@@ -184,13 +184,21 @@ async function renderMonth(month) {
 }
 
 (async function init() {
-  CATS = await api('/api/standard-categories');
   renderChrome('month');
+  // Reserve the cards section height before the fetch so the page
+  // doesn't jump when the data lands (renderMonthCards replaces them).
+  $id('monthCards').innerHTML = skelCards(4, 'value');
+  CATS = await api('/api/standard-categories');
   wireFlowToggle('flowSeg',
     () => { if (_flowCfg) makeFlowChart($id('flowChart'), _flowCfg); });
   const periods = await api('/api/periods');
   if (!periods.months.length) {
+    // No data: swap the skeletons for a compact note (emptyHint explains),
+    // and drop the whole "Weekly cash flow" section so the fixed-height
+    // .chart-wrap doesn't leave 320px of dead space.
+    $id('monthCards').innerHTML = '<p class="empty">No data yet.</p>';
     $id('emptyHint').style.display = 'block';
+    $id('flowChart').closest('section').style.display = 'none';
     return;
   }
   const sel = $id('monthSel');

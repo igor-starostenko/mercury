@@ -45,7 +45,7 @@
       </div>
       <span class="hint" id="chartHint"></span>
     </div>
-    <div class="panel"><canvas id="flowChart"></canvas></div>
+    <div class="panel"><div class="chart-wrap"><canvas id="flowChart"></canvas></div></div>
   </section>
 
   <section class="section">
@@ -118,13 +118,21 @@ async function renderYear(year) {
 }
 
 (async function init() {
-  CATS = await api('/api/standard-categories');
   renderChrome('year');
+  // Reserve the cards section height before the fetch so the page
+  // doesn't jump when the data lands (renderYearCards replaces them).
+  $id('yearCards').innerHTML = skelCards(4, 'value');
+  CATS = await api('/api/standard-categories');
   wireFlowToggle('flowSeg',
     () => { if (_flowCfg) makeFlowChart($id('flowChart'), _flowCfg); });
   const periods = await api('/api/periods');
   if (!periods.years.length) {
+    // No data: swap the skeletons for a compact note (emptyHint explains),
+    // and drop the whole "Monthly cash flow" section so the fixed-height
+    // .chart-wrap doesn't leave 320px of dead space.
+    $id('yearCards').innerHTML = '<p class="empty">No data yet.</p>';
     $id('emptyHint').style.display = 'block';
+    $id('flowChart').closest('section').style.display = 'none';
     return;
   }
   const sel = $id('yearSel');

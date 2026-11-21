@@ -38,7 +38,14 @@
       </div>
       <span class="hint">spend + income of the selected categories · line = 12-mo rolling average of their combined spend</span>
     </div>
-    <div class="panel" id="catTrendPanel"></div>
+    <!-- The canvas is in the markup (not injected by renderCatTrendChart)
+         so the section's full height exists at first paint — no layout
+         jump when the fetch lands. The fixed-height .chart-wrap (app.css)
+         does the reserving; renderCatTrendChart re-creates the wrap if a
+         no-data state swapped it out. -->
+    <div class="panel" id="catTrendPanel">
+      <div class="chart-wrap"><canvas id="catTrendChart"></canvas></div>
+    </div>
   </section>
 
   <section class="section">
@@ -197,7 +204,10 @@ function renderCatTrendChart() {
   });
   const totalsSpend = sumFor('spend');
   const totalsIncome = sumFor('income');
-  panel.innerHTML = '<canvas id="catTrendChart"></canvas>';
+  // The static markup already carries the .chart-wrap; the no-data branch
+  // above replaced the panel content, so re-create the wrap when missing.
+  const wrap = panel.querySelector('.chart-wrap');
+  if (!wrap) panel.innerHTML = '<div class="chart-wrap"><canvas id="catTrendChart"></canvas></div>';
   makeCategoryTrendChart($id('catTrendChart'), {
     labels: keys.map(monthLabel),
     keys,
@@ -250,13 +260,13 @@ async function renderAll() {
 }
 
 (async function init() {
+  renderChrome('categories');
   const [cats, health] = await Promise.all([
     api('/api/standard-categories'),
     api('/api/health'),
   ]);
   CATS = cats;
   window.LLM_CONFIGURED = !!health.llm_configured;
-  renderChrome('categories');
   wireCatTrendPicker();
   try {
     await renderAll();
