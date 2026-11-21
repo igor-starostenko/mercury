@@ -39,13 +39,12 @@
         <option value="uncategorized">Set by: Unknown</option>
       </select>
       <span class="hint" id="ovHint">click a column to sort</span>
+      <div class="panel" id="txnChartPanel" style="display:none;flex:1 1 100%">
+        <div style="position:relative;height:320px"><canvas id="txnChart"></canvas></div>
+      </div>
       <input type="search" class="txn-search" id="ovSearch"
              placeholder="Search description… (rule-match preview)"
              aria-label="Search transactions by description">
-    </div>
-    <div class="panel" id="txnChartPanel" style="display:none;margin-bottom:16px">
-      <div class="hint" id="txnChartNote" style="margin:0 0 8px"></div>
-      <canvas id="txnChart"></canvas>
     </div>
     <div class="panel tight">
       <div id="overrides"></div>
@@ -105,13 +104,10 @@ async function loadOverrides() {
   renderOverrides();
 }
 
-/* Bar chart of the rows the search/filter is showing right now — one bar
- * per transaction in table order, so it always mirrors the list below.
- * Spend and income are two null-filled datasets (house convention, same
- * colors as makeFlowChart's totals view). Capped at TXN_CHART_MAX: a
- * search can match tens of thousands of rows and per-bar work past a
- * couple of thousands turns the chart into an unreadable smear. */
-const TXN_CHART_MAX = 2000;
+/* Monthly bar chart of the rows the search/filter is showing right now —
+ * same layout as makeFlowChart's totals view: one label per month, Spend
+ * and Income bars side by side. Grouped from the live row set, so it
+ * always mirrors the list below; hidden when the search returns nothing. */
 function renderTxnChart(rows) {
   const panel = $id('txnChartPanel');
   const canvas = $id('txnChart');
@@ -122,27 +118,35 @@ function renderTxnChart(rows) {
     return;
   }
   panel.style.display = '';
-  const shown = rows.length > TXN_CHART_MAX ? rows.slice(0, TXN_CHART_MAX) : rows;
-  $id('txnChartNote').textContent = shown.length < rows.length
-    ? 'first ' + shown.length + ' of ' + rows.length + ' transactions shown'
-    : '';
+  // Month key -> [spend, income] over the shown rows; keys in time order.
+  const months = new Map();
+  for (const t of rows) {
+    const k = (t.date || '').slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(k)) continue;
+    const m = months.get(k) || [0, 0];
+    if (t.amount < 0) m[0] += -t.amount;
+    else if (t.amount > 0) m[1] += t.amount;
+    months.set(k, m);
+  }
+  const keys = [...months.keys()].sort();
+  const r2 = v => Math.round(v * 100) / 100;
   new Chart(canvas, {
     type: 'bar',
     data: {
-      labels: shown.map(t => t.date),
+      labels: keys.map(monthLabel),
       datasets: [
-        { label: 'Spend', data: shown.map(t => t.amount < 0 ? t.amount : null),
+        { label: 'Spend', data: keys.map(k => r2(months.get(k)[0])),
           backgroundColor: withAlpha(cssColor('--spend'), .78),
           hoverBackgroundColor: cssColor('--spend'),
-          borderRadius: 2, maxBarThickness: 38 },
-        { label: 'Income', data: shown.map(t => t.amount > 0 ? t.amount : null),
+          borderRadius: 4, maxBarThickness: 38 },
+        { label: 'Income', data: keys.map(k => r2(months.get(k)[1])),
           backgroundColor: withAlpha(cssColor('--income'), .85),
           hoverBackgroundColor: cssColor('--income'),
-          borderRadius: 2, maxBarThickness: 38 },
+          borderRadius: 4, maxBarThickness: 38 },
       ],
     },
     options: {
-      responsive: true,
+      responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { position: 'top', align: 'end',
@@ -150,24 +154,18 @@ function renderTxnChart(rows) {
         tooltip: {
           // This vendored build calls filter(item, index, dataPoints,
           // chart) — only item is used here, so the slot order is safe.
-          filter: item => item.raw != null,
+          filter: item => Number(item.raw) !== 0,
           callbacks: {
-            // items can be empty (row amount is exactly 0 — both
-            // datasets null there, the filter drops them) — stay safe.
-            title: items => items.length ? shown[items[0].dataIndex].date : '',
             label: c => ' ' + c.dataset.label + ': ' + fmtMoney(Number(c.raw)),
-            afterBody: items => items.length
-              ? [shown[items[0].dataIndex].source + ' · ' +
-                 (shown[items[0].dataIndex].description || '(no description)')]
-              : [],
           },
         },
       },
       scales: {
         x: { ticks: { color: cssColor('--muted'), autoSkip: true,
-                      maxTicksLimit: 10, maxRotation: 0 },
+                      maxTicksLimit: 12, maxRotation: 0 },
              grid: { display: false } },
-        y: { ticks: { color: cssColor('--muted'), callback: v => fmtAxis(v) },
+        y: { beginAtZero: true,
+             ticks: { color: cssColor('--muted'), callback: v => fmtAxis(v) },
              grid: { color: cssColor('--grid') } },
       },
     },
