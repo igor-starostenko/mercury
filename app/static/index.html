@@ -34,7 +34,7 @@
       </div>
       <span class="hint">all time · lines: trailing 12-month average · click a bar for the month view</span>
     </div>
-    <div class="panel"><canvas id="flowChart"></canvas></div>
+    <div class="panel"><div class="chart-wrap"><canvas id="flowChart"></canvas></div></div>
   </section>
 
   <section class="section">
@@ -147,8 +147,11 @@ async function renderAll() {
 }
 
 (async function init() {
-  CATS = await api('/api/standard-categories');
   renderChrome('home');
+  // Reserve the year-cards section height before the fetch so the page
+  // doesn't jump when the data lands (renderAll replaces the skeletons).
+  $id('yearCards').innerHTML = skelCards(4, 'rows');
+  CATS = await api('/api/standard-categories');
   wireFlowToggle('flowSeg',
     () => { if (_flowCfg) makeFlowChart($id('flowChart'), _flowCfg); });
   try {

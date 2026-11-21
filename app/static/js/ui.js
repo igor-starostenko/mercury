@@ -19,6 +19,24 @@ function cssColor(name, fallback) {
   return v || fallback;
 }
 
+/* Skeleton placeholders: seed a container before its fetch so the
+ * section's final height exists at first paint (no layout jump when the
+ * data lands). kind 'value' = label + one big value (month/year cards);
+ * kind 'rows' = label + three label/value rows (overview year cards).
+ * The bars reuse the real .card/.row/.label/.value boxes, so the
+ * reserved height equals the rendered height exactly. */
+function skelCard(kind) {
+  const bar = (w) => `<i class="skel-bar" style="width:${w}"></i>`;
+  const rows = [0, 1, 2].map(() =>
+    `<div class="row">${bar('42%')}${bar('20%')}</div>`).join('');
+  return kind === 'rows'
+    ? `<div class="card skel" aria-hidden="true"><div class="label">${bar('34%')}</div>${rows}</div>`
+    : `<div class="card skel" aria-hidden="true"><div class="label">${bar('34%')}</div><div class="value">${bar('52%')}</div></div>`;
+}
+function skelCards(n, kind) {
+  return Array.from({ length: n }, () => skelCard(kind)).join('');
+}
+
 /* ------------------------------------------------------------- page chrome */
 function renderChrome(active) {
   $id('site-header').innerHTML = `
@@ -626,6 +644,10 @@ function makeFlowChart(canvas, cfg) {
   if (existing) existing.destroy();
   const options = {
     responsive: true,
+    // The canvas sits in a fixed-height .chart-wrap (app.css), so the
+    // chart section is the same height before and after the data lands —
+    // no aspect-ratio-derived height when the page first paints.
+    maintainAspectRatio: false,
     interaction: { mode: 'index', intersect: false },
     plugins: {
       legend: { position: 'top', align: 'end',
@@ -804,6 +826,9 @@ function makeCategoryTrendChart(canvas, cfg) {
   if (existing) existing.destroy();
   const options = {
     responsive: true,
+    // Fixed-height .chart-wrap (app.css): same section height before and
+    // after the data lands (see makeFlowChart's note).
+    maintainAspectRatio: false,
     interaction: { mode: 'index', intersect: false },
     plugins: {
       legend: { position: 'top', align: 'end',

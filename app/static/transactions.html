@@ -59,9 +59,12 @@
         <div style="position:relative;height:320px"><canvas id="txnChart"></canvas></div>
       </div>
     </div>
-    <div class="panel tight">
-      <div id="overrides"></div>
-    </div>
+    <!-- id="overrides" on the panel itself (moved off the inner div): the
+         panel is the .panel mount, so while empty it gets the
+         .panel:empty min-height — the list's space is reserved before the
+         fetch lands. The inner div is gone; renderOverrides targets the
+         panel directly. -->
+    <div class="panel tight" id="overrides"></div>
   </section>
 </main>
 <div class="toast" id="toast"></div>
@@ -310,6 +313,7 @@ async function renderAll() {
 }
 
 (async function init() {
+  renderChrome('transactions');
   const [cats, health, accounts] = await Promise.all([
     api('/api/standard-categories'),
     api('/api/health'),
@@ -328,7 +332,6 @@ async function renderAll() {
   $id('txnScopeAccount').innerHTML =
     _scopeOptions(_scopeAccounts(accounts, ''), 'All accounts');
   syncTxnRuleControls();
-  renderChrome('transactions');
   try {
     await renderAll();
   } catch (e) {
