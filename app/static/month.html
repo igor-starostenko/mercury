@@ -61,10 +61,9 @@
       <h2>Transactions</h2>
       <span class="badge" id="txnCount"></span>
       <!-- Shared hint (ui.js txnSearchHint — same as the Transactions
-           page): idle -> sort nudge; while a search is active the
-           badge already reports the narrowing, so the hint stays
-           empty (non-default sort direction still shown). -->
-      <span class="hint" id="txnHint">click a column to sort</span>
+           page): empty unless a non-default sort direction or an extra
+           note is active. -->
+      <span class="hint" id="txnHint"></span>
     </div>
     <!-- Same search bar as the Transactions page: one form inside the
          panel above the table (the Categories rule-panel layout), shared

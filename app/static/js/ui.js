@@ -1239,12 +1239,11 @@ function wireTxnSearchBar(input, setBySel, onFilter,
 }
 /* Shared hint text for the search panels (Transactions + Month). While
  * a search term is active the shown-count badge already reports the
- * narrowing, so the hint carries no "for "X"" echo and no sort nudge;
- * idle -> "click a column to sort". A non-default sort direction and an
- * optional extra note (e.g. "LLM not configured") show in both states. */
+ * narrowing, so the hint carries no "for "X"" echo; idle -> empty. A
+ * non-default sort direction and an optional extra note (e.g. "LLM not
+ * configured") show in both states. */
 function txnSearchHint(q, st, note) {
   const parts = [];
-  if (!(q || '').trim()) parts.push('click a column to sort');
   if (st && (st.key !== 'date' || st.dir !== 'desc'))
     parts.push(txnSortLabel(st));
   if (note) parts.push(note);
