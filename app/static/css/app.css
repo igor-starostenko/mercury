@@ -212,11 +212,10 @@ header {
 }
 .brand h1 { font-size: 16px; margin: 0; font-weight: 650; letter-spacing: .01em; }
 .brand-text { min-width: 0; }
-.brand .sub { color: var(--muted); font-size: 11.5px; margin-top: 1px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* In-page scoped date range — first element of <main> on every page
- * (dates moved out of the header). Fixed min-height so an empty scope
- * (no data yet) doesn't shift the layout. */
+/* In-page scoped label — first element of <main> on every page:
+ * "first → last · N transactions" (range + count moved out of the
+ * header per sr1us). Fixed min-height so an empty scope (no data yet)
+ * doesn't shift the layout. */
 .page-range { color: var(--muted); font-size: 12px; margin: 0 0 20px; min-height: 1.5em; }
 /* Nav sits left, directly after the brand (header gap:14px spaces it).
  * Pushing it right next to the import buttons read as "floating in the

@@ -114,8 +114,7 @@ async function renderYear(year) {
     `${year} · lines: trailing 12-month average · click a bar for the month view`;
 
   renderCategoryTable($id('catTable'), cats, { year });
-  setRangeSub(totalsSub(sum, 'no transactions in ' + year));
-  setPageRange(sum.first_date, sum.last_date);
+  setPageRange(sum.first_date, sum.last_date, txnCountText(sum, 'no transactions in ' + year));
 }
 
 (async function init() {

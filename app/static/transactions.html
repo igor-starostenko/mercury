@@ -253,8 +253,7 @@ $id('ovSearch').addEventListener('input', () => {
 async function renderAll() {
   const summary = await api('/api/summary');
   $id('emptyHint').style.display = summary.n_transactions ? 'none' : 'block';
-  setRangeSub(totalsSub(summary));
-  setPageRange(summary.first_date, summary.last_date);
+  setPageRange(summary.first_date, summary.last_date, txnCountText(summary));
 
   // Merged categorization list: overrides + still-uncategorized rows.
   // Filter/search/sort state is kept; the server filters + sorts the full

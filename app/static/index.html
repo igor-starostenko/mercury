@@ -96,8 +96,7 @@ async function renderAll() {
   ]);
 
   $id('emptyHint').style.display = summary.n_transactions ? 'none' : 'block';
-  setRangeSub(totalsSub(summary));
-  setPageRange(summary.first_date, summary.last_date);
+  setPageRange(summary.first_date, summary.last_date, txnCountText(summary));
 
   // All-time monthly flow (union of months with spend or income).
   const months = [...new Set([
