@@ -24,7 +24,7 @@ function renderChrome(active) {
   $id('site-header').innerHTML = `
     <header>
       <div class="brand">
-      <div class="mark">M</div>
+      <div class="mark" title="Hg — mercury, element 80">Hg</div>
       <div class="brand-text"><h1>Mercury</h1><div class="sub" id="range-sub"></div></div>
       </div>
       <nav>
