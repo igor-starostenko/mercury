@@ -260,6 +260,10 @@ main { padding: 22px 24px 48px; max-width: 1240px; margin: 0 auto; }
 
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }
 .panel.tight { padding: 0; overflow: hidden; }
+/* Directly stacked sibling panels (e.g. the transactions chart panel
+   above the search panel) — one page's one-panel-per-section convention
+   doesn't cover this, so scope the gap to .section children. */
+.section > .panel + .panel { margin-top: 14px; }
 .panel canvas { max-height: 340px; }
 
 .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
