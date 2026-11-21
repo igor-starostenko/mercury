@@ -224,8 +224,7 @@ async function renderAll() {
     ]);
 
   $id('emptyHint').style.display = summary.n_transactions ? 'none' : 'block';
-  setRangeSub(totalsSub(summary));
-  setPageRange(summary.first_date, summary.last_date);
+  setPageRange(summary.first_date, summary.last_date, txnCountText(summary));
 
   // Category totals with drill-down.
   renderCategoryTable($id('catTable'), cats, {});

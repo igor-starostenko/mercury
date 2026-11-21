@@ -25,7 +25,7 @@ function renderChrome(active) {
     <header>
       <div class="brand">
       <div class="mark" title="Hg — mercury, element 80">Hg</div>
-      <div class="brand-text"><h1>Mercury</h1><div class="sub" id="range-sub"></div></div>
+      <div class="brand-text"><h1>Mercury</h1></div>
       </div>
       <nav>
         <a href="/" class="${active === 'home' ? 'active' : ''}">Overview</a>
@@ -187,29 +187,27 @@ function wireThemeMenu() {
   });
 }
 
-function setRangeSub(text) {
-  const el = $id('range-sub');
+/* In-page scoped label (top of page content): date range + transaction
+ * count, "first → last · N transactions". Both live here now — the
+ * count moved out of the header per sr1us, so the header keeps one
+ * stable shape on every page. note is the pre-formatted count or a
+ * fallback ("no transactions in 2026"); empty parts are skipped. */
+function setPageRange(first, last, note) {
+  const el = $id('page-range');
   if (!el) return;
-  el.textContent = text;
-  el.title = text; // full text on hover (sub may be ellipsized)
+  const parts = [];
+  if (first && last) parts.push(`${first} → ${last}`);
+  if (note) parts.push(note);
+  el.textContent = parts.join('  ·  ');
 }
 
-/* Header sub: scoped totals only. The date range lives in the in-page
- * .page-range label, so the header keeps one stable shape on every page.
- * Transactions only — the account count moved out of the header per
- * sr1us (the per-account table on the Overview page already shows it). */
-function totalsSub(s, fallback) {
+/* Scoped transaction count for the in-page range label (was the header
+ * sub). */
+function txnCountText(s, fallback) {
   const t = s && s.n_transactions;
   return t
     ? `${t} transaction${t === 1 ? '' : 's'}`
     : (fallback || '');
-}
-
-/* In-page scoped date range (top of page content): "first → last". */
-function setPageRange(first, last) {
-  const el = $id('page-range');
-  if (!el) return;
-  el.textContent = first && last ? `${first} → ${last}` : '';
 }
 
 /* -------------------------------------------------------------------- upload */

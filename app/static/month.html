@@ -180,8 +180,7 @@ async function renderMonth(month) {
   $id('txnCount').textContent = txns.length + ' transactions';
   mountTxnTable($id('txnTable'), txns);
   updateTxnHint();
-  setRangeSub(totalsSub(sum, 'no transactions in ' + monthLong(month)));
-  setPageRange(sum.first_date, sum.last_date);
+  setPageRange(sum.first_date, sum.last_date, txnCountText(sum, 'no transactions in ' + monthLong(month)));
 }
 
 (async function init() {
