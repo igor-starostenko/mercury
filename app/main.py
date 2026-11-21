@@ -700,7 +700,16 @@ def health():
 
 
 if __name__ == "__main__":
+    import logging
     import uvicorn
+
+    def _skip_well_known_probe(record: logging.LogRecord) -> bool:
+        # Chrome probes /.well-known/... (DevTools metadata) on every page load;
+        # it is a legitimate 404, but keep the access log clean.
+        return "/.well-known/" not in record.getMessage()
+
+    logging.getLogger("uvicorn.access").addFilter(_skip_well_known_probe)
+
     host = os.environ.get("MERCURY_HOST", "127.0.0.1")
     port = int(os.environ.get("MERCURY_PORT", "8000"))
     print(f"Mercury starting on http://{host}:{port}")
