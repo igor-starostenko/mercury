@@ -593,8 +593,15 @@ function wireFlowToggle(segId, redraw) {
 
 /* Category color: the standard palette first, then a stable hash for
  * custom categories (rule pickers allow free names) so stacked
- * segments don't all land on the grey fallback. */
+ * segments don't all land on the grey fallback. The "All other"
+ * aggregate is pinned FIRST to the bar chart's aggregate grey
+ * (CAT_COLORS['Other'] = #9aa3b2), so every chart — flow charts,
+ * Sankey links — colors the catch-all identically by construction.
+ * Accepted edge: a custom rule literally named "All other" now
+ * renders that grey instead of its hash color — ALL_OTHER is a
+ * reserved name for the aggregate (see the const above). */
 function catColor(name) {
+  if (name === ALL_OTHER) return CAT_COLORS[OTHER_CATEGORY];
   if (CAT_COLORS[name]) return CAT_COLORS[name];
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
