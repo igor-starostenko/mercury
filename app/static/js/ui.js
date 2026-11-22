@@ -228,6 +228,59 @@ function txnCountText(s, fallback) {
     : (fallback || '');
 }
 
+/* ------------------------------------------------- period navigation
+ * Prev/next step through the AVAILABLE periods — the select's options,
+ * i.e. only years/months that actually have data. "Previous" = older,
+ * "Next" = newer; a button is disabled when that neighbor doesn't
+ * exist ("if available"). Arrow keys mirror the buttons: ArrowLeft =
+ * previous, ArrowRight = next — suppressed while the caret is in a
+ * text field (search box, rule inputs, rename boxes) or on a
+ * <select>, so those keep their native arrow behavior. Options are
+ * re-read on every step, so the state is always live (a re-render
+ * never needs to re-wire). */
+function wirePeriodNav({ sel, navigate, prevBtn, nextBtn }) {
+  const cmp = (a, b) =>
+    (/^\d+$/.test(a) && /^\d+$/.test(b)) ? (+a - +b) : a.localeCompare(b);
+  // Ascending (oldest -> newest) from the select's options.
+  const available = () => [...sel.options].map(o => o.value)
+    .filter(Boolean).sort(cmp);
+  const step = dir => { // dir -1 = older, +1 = newer; null at the edge
+    const list = available();
+    const i = list.indexOf(sel.value);
+    if (i === -1) return null;
+    const j = i + dir;
+    return (j >= 0 && j < list.length) ? list[j] : null;
+  };
+  const go = dir => {
+    const v = step(dir);
+    if (v != null && v !== sel.value) navigate(v);
+  };
+  const paint = () => {
+    const hasPrev = step(-1) != null;
+    const hasNext = step(1) != null;
+    if (prevBtn) {
+      prevBtn.disabled = !hasPrev;
+      prevBtn.title = hasPrev ? 'Previous period (←)' : 'No earlier period with data';
+    }
+    if (nextBtn) {
+      nextBtn.disabled = !hasNext;
+      nextBtn.title = hasNext ? 'Next period (→)' : 'No later period with data';
+    }
+  };
+  if (prevBtn) prevBtn.addEventListener('click', () => go(-1));
+  if (nextBtn) nextBtn.addEventListener('click', () => go(1));
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const t = e.target;
+    const tag = (t && t.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select' ||
+        (t && t.isContentEditable)) return;
+    e.preventDefault();
+    go(e.key === 'ArrowLeft' ? -1 : 1);
+  });
+  paint();
+}
+
 /* -------------------------------------------------------------------- upload */
 let PENDING_FILES = new Map(); // filename -> File, kept so files that need a
                                // bank pick can be re-sent after the user chooses
