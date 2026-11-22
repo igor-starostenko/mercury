@@ -867,12 +867,16 @@ function makeFlowChart(canvas, cfg) {
 function makeSankeyChart(canvas, flows) {
   const existing = Chart.getChart(canvas);
   if (existing) existing.destroy();
-  const section = canvas.closest('section');
-  if (!flows.length) { // no data: hide the fixed-height chart section
-    if (section) section.style.display = 'none';
+  const wrap = canvas.parentElement;
+  const hint = wrap.querySelector('.chart-empty');
+  if (hint) hint.remove();
+  if (!flows.length) { // no data: muted hint in the fixed-height wrap
+    const h = document.createElement('div'); // (panel never hidden —
+    h.className = 'chart-empty'; // stable space, like the other charts)
+    h.textContent = 'no transactions yet';
+    wrap.appendChild(h);
     return null;
   }
-  if (section) section.style.display = '';
 
   // Two banks can share an account name ("Checking") — disambiguate
   // only the duplicates, with the source prefixed.
