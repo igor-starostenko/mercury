@@ -28,7 +28,8 @@ The bottom line: statements in, honest charts out, nothing leaving the
 house.
 
 This is the Overview page: cash flow by month, year cards, your
-accounts, and spend by category.
+accounts, spend by category, and the account → category flow map —
+where each account's money actually landed, all in one view.
 
 ![Mercury Overview page](docs/screenshots/overview.png)
 
@@ -96,7 +97,7 @@ Transactions page, where you can fix it in one click.
 ### 4. Keep the totals honest
 
 - **Ignore transfers and noise.** Use the **Ignore transactions** panel
-  (Overview or Categories page) to exclude by keyword ("transfer",
+  (Categories page) to exclude by keyword ("transfer",
   "payment from me") or by date range — or pick **Ignored** on a single
   transaction. Ignored rows stay visible, dimmed and marked, but are
   excluded from every total. That's the intended home for money moving
@@ -113,7 +114,7 @@ Transactions page, where you can fix it in one click.
 
 | Page | What you see |
 | --- | --- |
-| **Overview** | Cash flow by month (all time) — stacked by category or as spend-vs-income totals, with trailing 12-month average lines. Year cards, an accounts table, and spend by category. Click a bar, a year, or a category row to zoom in. The rule and ignore panels live here too. |
+| **Overview** | Cash flow by month (all time) — stacked by category or as spend-vs-income totals, with trailing 12-month average lines. Year cards, an accounts table, and spend by category. An **account → category flow** sankey maps where each account's money landed (spend and income both show; ignored rows excluded). Click a bar, a year, or a category row to zoom in. The rule and ignore panels live on the Categories page. |
 | **Categories** | The monthly spend trend for any category (one or several at once) against its 12-month average — the fastest way to spot "we're spending more on X". |
 | **Transactions** | Everything Mercury itself categorized (you / AI / rule) plus what's still unknown — with search, a "Set by" filter, inline category editing, and the optional Classify (LLM) button. |
 | **Year** | One year in detail: monthly cash flow and spend by category. |
@@ -340,7 +341,7 @@ matching rule > LLM assignment > CSV import. Re-picking a category on
 a rule-classified row marks it as yours and pins it against the rule.
 
 The rule's category can be the reserved value `"Ignored"` — the UI
-gives it its own **Ignore transactions** box (home + Categories pages):
+gives it its own **Ignore transactions** box (Categories page):
 a keyword plus "Ignore matches", no category dropdown needed. A single
 transaction can also be ignored by hand via its category dropdown.
 Ignored rows are excluded from every total (spend,
