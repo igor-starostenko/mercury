@@ -251,6 +251,30 @@ def accounts(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
             for s, a, n, net in rows]
 
 
+def sankey_flow(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
+    """Gross movement per (account, category) for the Overview sankey.
+
+    One row per (source, account, effective category) that has a
+    non-zero, non-ignored movement: ``amount`` = SUM(ABS(amount)), so
+    spend and income both surface as account → category bands (the
+    chart is one-directional by design — income lands in its category
+    the same way spend does). Ignored rows are excluded, like every
+    other aggregate. All time: the Overview page shows the whole
+    history, and the page has no period picker.
+    """
+    rows = con.execute(f"""
+        SELECT source, account,
+               COALESCE(category, 'Uncategorized') AS category,
+               SUM(ABS(amount)) AS flow
+        FROM effective_transactions
+        WHERE amount != 0 AND {NOT_IGNORED}
+        GROUP BY 1, 2, 3
+        ORDER BY 1, 2, 4 DESC
+    """).fetchall()
+    return [{"source": s, "account": a, "category": c, "amount": round(f, 2)}
+            for s, a, c, f in rows]
+
+
 def unknown_categories(con: duckdb.DuckDBPyConnection,
                        limit: int = 200) -> list[dict[str, Any]]:
     rows = con.execute("""

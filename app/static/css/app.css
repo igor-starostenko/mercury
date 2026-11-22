@@ -338,6 +338,10 @@ th.sortable .sort-ind { margin-left: 4px; font-size: 8px; letter-spacing: 0; }
 }
 @keyframes skel-pulse { 50% { opacity: .45; } }
 .chart-wrap { position: relative; height: 320px; }
+/* Overview sankey: one node row per account and per category — the
+   fixed height must fit ~24 labels (nodePadding 14 + line-height per
+   row) or the plugin squeezes the bands. */
+.chart-wrap.sankey { height: 640px; }
 /* Muted empty-state inside the fixed-height chart wrap (the panel is
    never hidden — stable space while loading / on an empty search). */
 .chart-empty { position: absolute; inset: 0; display: flex; align-items: center;
@@ -552,4 +556,5 @@ mark {
   main { padding: 16px 14px 40px; }
   .desc { max-width: 220px; }
   .chart-wrap { height: 240px; }
+  .chart-wrap.sankey { height: 520px; }
 }

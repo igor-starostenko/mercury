@@ -246,6 +246,18 @@ def accounts():
         con.close()
 
 
+@app.get("/api/sankey")
+def sankey():
+    """Account → category gross flows for the Overview sankey chart:
+    per (source, account, effective category), SUM(ABS(amount)) over
+    non-ignored, non-zero rows — all time."""
+    con = get_con()
+    try:
+        return analytics.sankey_flow(con)
+    finally:
+        con.close()
+
+
 # ---------------------------------------------------------------------------
 # Manage Imports: re-label or delete a CSV import as a unit
 # ---------------------------------------------------------------------------

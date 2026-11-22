@@ -851,6 +851,106 @@ function makeFlowChart(canvas, cfg) {
   return chart;
 }
 
+/* Overview sankey: gross movement from each account to its effective
+ * categories — account → category bands. Spend and income both flow
+ * the same direction (the chart is one-way by design), so a card's
+ * charges and its income both show; ignored rows never reach the
+ * endpoint (server-side, like every aggregate).
+ *
+ * Node order: total flow, largest first (the layout keeps
+ * first-appearance order, so the widest bands sit at the top).
+ * Node colors follow the band ends — the plugin takes each node's
+ * fill from the flow element's resolved colorFrom/colorTo: accounts
+ * get a theme-neutral fill, categories their palette color, and the
+ * band is a low-alpha gradient between the two.
+ * flows: [{source, account, category, amount}] (amount > 0). */
+function makeSankeyChart(canvas, flows) {
+  const existing = Chart.getChart(canvas);
+  if (existing) existing.destroy();
+  const section = canvas.closest('section');
+  if (!flows.length) { // no data: hide the fixed-height chart section
+    if (section) section.style.display = 'none';
+    return null;
+  }
+  if (section) section.style.display = '';
+
+  // Two banks can share an account name ("Checking") — disambiguate
+  // only the duplicates, with the source prefixed.
+  const acctKey = f => f.source + '\u0000' + f.account;
+  const acctTotal = {}, catTotal = {};
+  for (const f of flows) {
+    acctTotal[acctKey(f)] = (acctTotal[acctKey(f)] || 0) + f.amount;
+    catTotal[f.category] = (catTotal[f.category] || 0) + f.amount;
+  }
+  const names = Object.keys(acctTotal).map(k => k.split('\u0000').pop());
+  const dupNames = new Set(names.filter((n, i) => names.indexOf(n) !== i));
+  const acctLabel = k => {
+    const [s, a] = k.split('\u0000');
+    return dupNames.has(a) ? s + ' · ' + a : a;
+  };
+
+  const accts = Object.keys(acctTotal)
+    .sort((a, b) => acctTotal[b] - acctTotal[a] || a.localeCompare(b));
+  const cats = Object.keys(catTotal)
+    .sort((a, b) => catTotal[b] - catTotal[a] || a.localeCompare(b));
+  const labels = accts.map(acctLabel).concat(cats);
+  const nodeIndex = new Map(labels.map((l, i) => [l, i]));
+  // First-appearance order = account rank, then category rank.
+  const data = flows.map(f => ({
+    from: acctLabel(acctKey(f)), to: f.category, flow: f.amount,
+  })).sort((a, b) =>
+    nodeIndex.get(a.from) - nodeIndex.get(b.from) ||
+    (catTotal[b.to] || 0) - (catTotal[a.to] || 0));
+
+  const css = getComputedStyle(document.documentElement);
+  const acctColor = (css.getPropertyValue('--muted') || '').trim() || '#5a6772';
+
+  return new Chart(canvas, {
+    type: 'sankey',
+    data: {
+      datasets: [{
+        data,
+        colorFrom: () => acctColor,
+        // Scriptable ctx: Chart.js passes the dataset context with
+        // ctx.raw = the raw data item ({from, to, flow}).
+        colorTo: ctx => catColor(String((ctx && ctx.raw && ctx.raw.to) ?? '')),
+      }],
+    },
+    options: {
+      responsive: true,
+      // Fixed-height .chart-wrap (app.css) — no aspect-ratio-derived
+      // height when the page first paints (layout-stability rule).
+      maintainAspectRatio: false,
+      layout: { padding: { top: 6, bottom: 6 } },
+      // Labels: the plugin draws node keys beside the nodes; give them
+      // the theme text color (default is black — unreadable on dark
+      // schemes). Keep the default font (the chart font).
+      nodeLabels: { display: true, color:
+        (css.getPropertyValue('--text') || '').trim() || '#25343f' },
+      nodeWidth: 12,
+      nodePadding: 14,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          displayColors: false,
+          callbacks: {
+            title: () => '',
+            // Default shape: parsed._custom = {from:{key}, to:{key},
+            // flow} — format the flow as money.
+            label(ctx) {
+              const p = ctx.parsed, c = p._custom || {};
+              const from = (c.from && c.from.key) ?? p.from;
+              const to = (c.to && c.to.key) ?? p.to;
+              const v = (c && typeof c.flow === 'number') ? c.flow : p.flow;
+              return `${from} → ${to}: ${fmtMoney(v)}`;
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
 /* Categories page trend chart: monthly flow stacked over EXACTLY the
  * categories the multiselect picker chose — no top-8 folding, no
  * "All other", no totals/category mode toggle (the picker is the

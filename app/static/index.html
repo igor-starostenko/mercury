@@ -11,6 +11,7 @@
 <title>Mercury — Overview</title>
 <link rel="stylesheet" href="/static/css/app.css" />
 <script src="/static/vendor/chart.umd.min.js"></script>
+<script src="/static/vendor/chartjs-chart-sankey.min.js"></script>
 <script src="/static/js/common.js"></script>
 <script src="/static/js/ui.js"></script>
 </head>
@@ -60,18 +61,10 @@
 
   <section class="section">
     <div class="section-head">
-      <h2>Custom category rules</h2>
-      <span class="hint">keyword in description → category · drag rows to change priority · first match wins · originals are never modified</span>
+      <h2>Account → category flow</h2>
+      <span class="hint">all time · where each account's money landed · ignored rows excluded</span>
     </div>
-    <div class="panel" id="rulesPanel"></div>
-  </section>
-
-  <section class="section">
-    <div class="section-head">
-      <h2>Ignore transactions</h2>
-      <span class="hint">matching rows are excluded from all totals but stay visible — e.g. transfers between accounts · originals are never modified</span>
-    </div>
-    <div class="panel" id="ignoreRulesPanel"></div>
+    <div class="panel"><div class="chart-wrap sankey"><canvas id="sankeyChart"></canvas></div></div>
   </section>
 </main>
 <div class="toast" id="toast"></div>
@@ -84,15 +77,14 @@ let _flowCfg = null; // last chart config, so the view toggle re-draws
                      // without refetching
 
 async function renderAll() {
-  const [summary, monthly, years, cats, accounts, ruleData, dateIg] =
+  const [summary, monthly, years, cats, accounts, sankeyFlows] =
     await Promise.all([
     api('/api/summary'),
     api('/api/monthly'),
     api('/api/year-totals'),
     api('/api/categories'),
     api('/api/accounts'),
-    api('/api/rules'),
-    api('/api/date-ignores'),
+    api('/api/sankey'),
   ]);
 
   $id('emptyHint').style.display = summary.n_transactions ? 'none' : 'block';
@@ -131,10 +123,8 @@ async function renderAll() {
   // Category totals with drill-down.
   renderCategoryTable($id('catTable'), cats, {});
 
-  // Custom category rules (keyword -> category bulk override).
-  // Accounts feed the rule scope dropdowns (source/account filters).
-  renderRules(ruleData, accounts);
-  renderIgnoreRules(ruleData, dateIg, accounts);
+  // Sankey: each account → its categories (all time).
+  makeSankeyChart($id('sankeyChart'), sankeyFlows);
 
   // Accounts.
   $id('accounts').innerHTML = accounts.length
