@@ -21,7 +21,9 @@
   <section class="section">
     <div class="toolbar">
       <label for="monthSel">Month</label>
+      <button type="button" id="monthPrev" class="period-nav" aria-label="Previous month">‹</button>
       <select id="monthSel"></select>
+      <button type="button" id="monthNext" class="period-nav" aria-label="Next month">›</button>
       <span class="spacer"></span>
       <a href="/" style="color:var(--muted);font-size:13px">← back to overview</a>
     </div>
@@ -213,23 +215,31 @@ async function renderMonth(month) {
   wireFlowToggle('flowSeg',
     () => { if (_flowCfg) makeFlowChart($id('flowChart'), _flowCfg); });
   const periods = await api('/api/periods');
+  const sel = $id('monthSel');
+  const navigate = v => location.href = '/month?month=' + v;
   if (!periods.months.length) {
     // No data: swap the skeletons for a compact note (emptyHint explains),
     // and drop the whole "Weekly cash flow" section so the fixed-height
-    // .chart-wrap doesn't leave 320px of dead space.
+    // .chart-wrap doesn't leave 320px of dead space. The pager buttons
+    // still get wired — an empty select disables both.
     $id('monthCards').innerHTML = '<p class="empty">No data yet.</p>';
     $id('emptyHint').style.display = 'block';
     $id('flowChart').closest('section').style.display = 'none';
+    wirePeriodNav({ sel, navigate,
+      prevBtn: $id('monthPrev'), nextBtn: $id('monthNext') });
     return;
   }
-  const sel = $id('monthSel');
   // Newest first.
   sel.innerHTML = periods.months.slice().reverse()
     .map(m => `<option value="${m}">${monthLabel(m)}</option>`).join('');
   const requested = getParam('month');
   sel.value = requested && periods.months.includes(requested)
     ? requested : periods.months[periods.months.length - 1];
-  sel.onchange = () => location.href = '/month?month=' + sel.value;
+  sel.onchange = () => navigate(sel.value);
+  // ‹ › buttons + ArrowLeft/ArrowRight step through the months that have
+  // data; a button is disabled at the ends of the range.
+  wirePeriodNav({ sel, navigate,
+    prevBtn: $id('monthPrev'), nextBtn: $id('monthNext') });
   try {
     await renderMonth(sel.value);
   } catch (e) {
