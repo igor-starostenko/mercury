@@ -863,8 +863,11 @@ function makeFlowChart(canvas, cfg) {
  * fill from the flow element's resolved colorFrom/colorTo: accounts
  * get a theme-neutral fill, categories their palette color, and the
  * band is a low-alpha gradient between the two.
- * flows: [{source, account, category, amount}] (amount > 0). */
-function makeSankeyChart(canvas, flows) {
+ * flows: [{source, account, category, amount}] (amount > 0).
+ * emptyMsg: text for the no-data hint (defaults to the generic
+ * "no transactions yet" — the Overview passes a filter-specific one
+ * when the pickers hid everything). */
+function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet') {
   const existing = Chart.getChart(canvas);
   if (existing) existing.destroy();
   const wrap = canvas.parentElement;
@@ -873,7 +876,7 @@ function makeSankeyChart(canvas, flows) {
   if (!flows.length) { // no data: muted hint in the fixed-height wrap
     const h = document.createElement('div'); // (panel never hidden —
     h.className = 'chart-empty'; // stable space, like the other charts)
-    h.textContent = 'no transactions yet';
+    h.textContent = emptyMsg;
     wrap.appendChild(h);
     return null;
   }
