@@ -382,6 +382,12 @@ tr.open .chev { transform: rotate(90deg); color: var(--accent); }
 .catpick-item:hover { background: var(--panel-2); }
 .catpick-item input { accent-color: var(--accent); margin: 0; flex: none; }
 .catpick-item .dot { margin-right: 0; }
+/* Sankey category picker: the fixed "All other" catch-all row — a
+   divider above, muted dot + text (an aggregate, not a real category,
+   so no palette dot). */
+.catpick-item.sk-all-other { border-top: 1px solid var(--border);
+  margin-top: 5px; padding-top: 7px; color: var(--muted); }
+.catpick-item.sk-all-other .dot { background: var(--muted); }
 .share-bar { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
 .share-bar i { display: block; height: 100%; border-radius: 3px; }
 /* Bidirectional share bar (category table): left half = spend, right half =
