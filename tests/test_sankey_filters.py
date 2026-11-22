@@ -1,14 +1,18 @@
 """Server-side invariants for the Overview Sankey "All other" bucketing.
 
-The v1.5.0 category picker lists only the top-8-by-spend individual
-categories plus one "All other" entry: the client folds every
-remaining payload category into a single "All other" node, computed
-purely from the /api/sankey payload (bucket = payload categories −
-individual selection, one aggregated flow per account). These tests
-pin what that client math depends on: every flow carries a usable
-account + category + amount, "Ignored" never reaches the payload, and
-the per-account aggregation the client does sums exactly to the raw
-flows — nothing lost, nothing double-counted.
+The category picker lists EVERY payload category as an individual
+option plus one "All other" entry (v1.6.0: v1.5.0 capped the menu at
+the top 8 by spend — the first-visit DEFAULT is still the top 8):
+the client folds every remaining payload category into a single
+"All other" node, computed purely from the /api/sankey payload
+(bucket = payload categories − individual selection, one aggregated
+flow per account). These tests pin what that client math depends on:
+every flow carries a usable account + category + amount, "Ignored"
+never reaches the payload, the menu is exactly the payload category
+set (spend-desc ranking input), the reserved "All other" name never
+collides with a real category, and the per-account aggregation the
+client does sums exactly to the raw flows — nothing lost, nothing
+double-counted.
 """
 
 import duckdb
@@ -78,11 +82,19 @@ def _rows(tmp_path):
 
 
 def _cat_totals(rows):
-    """The client's skTopCats ranking input: per-category flow totals."""
+    """The client's skCatList ranking input: per-category flow totals."""
     total = {}
     for r in rows:
         total[r["category"]] = total.get(r["category"], 0) + r["amount"]
     return total
+
+
+def _cat_menu(rows):
+    """The client's category menu (v1.6.0): EVERY payload category,
+    spend-desc with name asc on ties — its head is the first-visit
+    default (top-N-by-spend)."""
+    total = _cat_totals(rows)
+    return sorted(total, key=lambda c: (-total[c], c))
 
 
 def _top8(rows):
@@ -177,3 +189,41 @@ def test_all_other_off_selects_nothing_outside_the_selection(tmp_path):
     assert sum(r["amount"] for r in outside) > 0
     assert not ({r["category"] for r in outside}
                 & {r["category"] for r in inside})
+
+
+def test_menu_is_exactly_the_payload_category_set(tmp_path):
+    """v1.6.0: the menu lists EVERY payload category — nothing hidden
+    from the picker, nothing invented. The menu set must equal the
+    payload category set exactly (no duplicates, every flow's category
+    present), per-category totals must be computable as the spend-desc
+    ranking input, and the first-visit default (top 8) must be the
+    head of that same ranking."""
+    rows = _rows(tmp_path)
+    payload_cats = {r["category"] for r in rows}
+    menu = _cat_menu(rows)
+    assert set(menu) == payload_cats
+    assert len(menu) == len(payload_cats)
+    # spend-desc, name asc on ties — strict ordering, no ties broken
+    # arbitrarily (the CDP check compares the menu DOM order against
+    # this ranking).
+    total = _cat_totals(rows)
+    for a, b in zip(menu, menu[1:]):
+        assert total[a] > total[b] or (total[a] == total[b] and a < b)
+    # The first-paint default is the head of the list (top 8 by spend).
+    assert menu[:8] == _top8(rows)
+    # The payload must hold categories OUTSIDE the default so the
+    # catch-all has real work to do (and the CDP "check a non-top-8"
+    # check has a target).
+    assert len(payload_cats) > 8
+
+
+def test_reserved_all_other_name_never_in_payload(tmp_path):
+    """The client names its catch-all node "All other" (ui.js ALL_OTHER,
+    index.html SK_ALL_OTHER) and pins its color to the aggregate grey —
+    a REAL payload category with that exact name would collide with the
+    aggregate (Sankey node keys ARE the category strings, so the two
+    would merge into one node). The standard vocabulary has "Other"
+    (hence the separate OTHER_CATEGORY const); pin that "All other"
+    never appears as a real category in the payload."""
+    rows = _rows(tmp_path)
+    assert "All other" not in {r["category"] for r in rows}

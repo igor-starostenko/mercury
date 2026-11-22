@@ -96,10 +96,12 @@ let _flowCfg = null; // last chart config, so the view toggle re-draws
 
 /* ------------------------------ account→category flow (sankey) */
 /* The sankey is filtered by two multiselect pickers — the
- * Categories-page catpick pattern: accounts default to ALL,
- * categories to the TOP 8 BY SPEND, and every remaining payload
- * category is aggregated into one "All other" node (on by default,
- * uncheckable). The selection persists in localStorage
+ * Categories-page catpick pattern: the accounts menu lists every
+ * payload account (default: ALL of them), the categories menu lists
+ * EVERY payload category (first-visit default: the top 8 by spend),
+ * and every category not individually selected aggregates into one
+ * "All other" node (on by default, checkable). The selection persists
+ * in localStorage
  * (mercury.sankeySel: {accounts, categories, allOther} — a missing
  * allOther key reads as true, so v1.4.0 state migrates cleanly) and
  * the filtering is CLIENT-SIDE over the cached /api/sankey payload —
@@ -149,18 +151,21 @@ function skAcctOptions() {
       ? f.source + ' · ' + f.account : f.account]);
 }
 
-/* Category menu: the TOP 8 BY SPEND individual categories — per-category
- * flow totals from the payload (the v1.4.0 top-8-by-spend default,
- * computed from the chart's own data so the menu list and the
- * "All other" bucket always agree on which categories exist).
- * Everything else is the catch-all's job, never a menu entry. */
-function skTopCats() {
+/* Category menu: EVERY payload category as an individual option —
+ * per-category flow totals from the payload, spend-desc with name
+ * asc on ties (so the head of the list IS the top-N-by-spend the
+ * first-visit default checks; computed from the chart's own data so
+ * the menu list and the "All other" bucket always agree on which
+ * categories exist). The "All other" catch-all still aggregates the
+ * categories that aren't individually selected — but every one of
+ * them is a menu entry, not just the top 8. */
+const SK_DEFAULT_CATS = 8; // first-visit default: top 8 by spend
+function skCatList() {
   const total = {};
   for (const f of _skFlows || [])
     total[f.category] = (total[f.category] || 0) + f.amount;
   return Object.keys(total)
-    .sort((a, b) => total[b] - total[a] || a.localeCompare(b))
-    .slice(0, 8);
+    .sort((a, b) => total[b] - total[a] || a.localeCompare(b));
 }
 
 /* Rebuild both menus from the cached payload + current selection
@@ -168,10 +173,10 @@ function skTopCats() {
  * options; idempotent). */
 function skPickers() {
   const acctOpts = skAcctOptions();
-  const top = skTopCats();
-  const catOpts = top.map(c => [c, c]);
+  const cats = skCatList();
+  const catOpts = cats.map(c => [c, c]);
   const opts = { accounts: acctOpts.map(o => o[0]),
-                 categories: top };
+                 categories: cats };
   const saved = skSaved();
   const allOther = skAllOther(saved);
   const sel = {};
@@ -185,11 +190,16 @@ function skPickers() {
     }
     // A saved selection is respected as-is (a saved [] stays []),
     // normalized to names that still exist in the menu; first visit →
-    // the whole listed default (top 8).
+    // the first-paint default: accounts = the WHOLE menu, categories
+    // = only the top 8 by spend — the menu now lists every category,
+    // so defaulting to the whole menu would check all 15 and (with
+    // allOther on) leave the "All other" bucket empty.
     sel[which] = saved && Array.isArray(saved[which])
       ? [...new Set(saved[which].filter(
           x => typeof x === 'string' && opts[which].includes(x)))]
-      : opts[which].slice();
+      : which === 'categories'
+        ? opts.categories.slice(0, SK_DEFAULT_CATS)
+        : opts.accounts.slice();
   }
   // Persist the default once real data exists (stable across reloads);
   // skip on a first paint with no data so it can't pre-empt imports.
@@ -217,7 +227,7 @@ function paintSkPicker(which, opts, sel, allOther) {
     <label class="catpick-item sk-all-other">
       <input type="checkbox" data-all-other
              ${allOther ? 'checked' : ''}>
-      <span class="dot"></span>
+      <span class="dot" style="background:${catColor(SK_ALL_OTHER)}"></span>
       <span>${esc(SK_ALL_OTHER)}</span>
     </label>` : '');
   // Keys embed U+0000 (the source/account separator), which the HTML
