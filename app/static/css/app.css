@@ -567,3 +567,13 @@ mark {
   .chart-wrap { height: 240px; }
   .chart-wrap.sankey { height: 440px; }
 }
+
+/* Merchants panel — free-form merchant input per row (the category
+   <select> is the fixed-vocabulary equivalent on the other pages). */
+.mr-input {
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 3px 6px; font-size: 12px; font-family: inherit;
+  min-width: 120px; width: 100%;
+}
+.mr-input:focus { outline: none; border-color: var(--accent); }

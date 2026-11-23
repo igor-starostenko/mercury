@@ -1324,6 +1324,11 @@ const TXN_SORTS = {
     cmp: (a, b) => a.amount - b.amount,
     labels: { asc: 'smallest first', desc: 'largest first' },
   },
+  merchant: {
+    def: 'asc', // A–Z, merchants sorted by name
+    cmp: (a, b) => String(a.merchant || '').localeCompare(String(b.merchant || ''), undefined, { numeric: true }),
+    labels: { asc: 'A–Z', desc: 'Z–A' },
+  },
 };
 function sortTxns(txns, state) {
   const rule = TXN_SORTS[state.key] || TXN_SORTS.date;

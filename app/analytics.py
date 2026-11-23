@@ -11,7 +11,7 @@ from __future__ import annotations
 import duckdb
 from typing import Any
 
-from . import rules
+from . import rules, merchants
 
 # Amount sign convention: negative = money out (spend), positive = money in.
 
@@ -664,3 +664,158 @@ def _date_filter(year: str | None, month: str | None) -> tuple[str, list]:
     if year:
         return ("AND strftime(txn_date, '%Y') = ?", [year])
     return "", []
+
+
+# ---------------------------------------------------------------------------
+# Merchants
+# ---------------------------------------------------------------------------
+
+_MERCHANT_SET_BY = ("all", "manual", "llm", "rule", "uncategorized")
+_MERCHANT_SORTS = {
+    "date": "v.txn_date",
+    "description": "lower(v.description)",
+    "amount": "v.amount",
+    "merchant": "lower(COALESCE(v.merchant, ''))",
+}
+_MERCHANT_SORT_DIR_DEFAULT = {"date": "desc", "description": "asc",
+                             "amount": "desc", "merchant": "asc"}
+
+
+def unknown_merchants(con: duckdb.DuckDBPyConnection,
+                      limit: int = 100000) -> list[dict[str, Any]]:
+    """Rows with no effective merchant (no override, no rule match)."""
+    rows = con.execute("""
+        SELECT id, source, account, CAST(txn_date AS VARCHAR), amount,
+               description
+        FROM effective_transactions
+        WHERE merchant IS NULL OR merchant = ''
+        ORDER BY txn_date DESC
+        LIMIT ?
+    """, [limit]).fetchall()
+    return [
+        {"id": r[0], "source": r[1], "account": r[2], "date": r[3],
+         "amount": r[4], "description": r[5]}
+        for r in rows
+    ]
+
+
+def merchant_rows(con: duckdb.DuckDBPyConnection,
+                  limit: int = 200,
+                  include_uncategorized: bool = False,
+                  set_by: str = "all",
+                  sort_by: str = "date",
+                  sort_dir: str | None = None,
+                  q: str | None = None) -> dict[str, Any]:
+    """Transactions whose merchant is set — explicit or by rule.
+
+    Built on the effective_transactions view, so rows re-tagged by a live
+    rule are included with ``set_by`` = 'rule' even though no override
+    row was written for them. Each row carries ``merchant`` (effective)
+    and ``set_by`` is 'manual', 'llm' or 'rule' — or 'uncategorized' for
+    rows with no merchant (the legacy 'unknown' badge is not used; a
+    merchant row always has a source).
+
+    With ``include_uncategorized``, rows that have no override, no rule
+    match and no CSV merchant are included as well, with ``set_by`` =
+    'uncategorized' (still untagged).
+
+    Without a search the rows are the section's base set above. With a
+    ``q`` and ``set_by='all'`` the search scans the FULL history — a typed
+    search must find every matching transaction, including rows that
+    carry no merchant and are not listed by default; those carry
+    ``set_by`` = 'uncategorized'. Chip-scoped searches keep their
+    provenance scope. Filtering and sorting run in SQL over the full
+    history — ``LIMIT`` is applied after the server-side filter and sort.
+    """
+    if set_by not in _MERCHANT_SET_BY:
+        raise ValueError(f"set_by must be one of: {', '.join(_MERCHANT_SET_BY)}")
+    if sort_by not in _MERCHANT_SORTS:
+        raise ValueError(f"sort_by must be one of: {', '.join(_MERCHANT_SORTS)}")
+    if sort_dir is None:
+        sort_dir = _MERCHANT_SORT_DIR_DEFAULT[sort_by]
+    if sort_dir not in ("asc", "desc"):
+        raise ValueError("sort_dir must be 'asc' or 'desc'")
+
+    q_norm = " ".join((q or "").split())
+    if set_by in ("manual", "llm", "rule"):
+        # Provenance scope: rows whose EFFECTIVE merchant was set by
+        # that actor (view's merchant_source). No base-set AND needed.
+        where: list[str] = ["v.merchant_source = ?"]
+        params: list[Any] = [set_by]
+    elif set_by == "uncategorized":
+        # Truly pending rows: no effective merchant.
+        where = ["v.merchant IS NULL OR v.merchant = ''"]
+        params = []
+    elif q_norm:
+        # Typed search scans the FULL history.
+        where = []
+        params = []
+    else:
+        # Base set: rows with an effective merchant, plus (opt-in) rows
+        # with none.
+        where = ["(v.merchant IS NOT NULL AND v.merchant <> ''"
+                 " OR (? = 1 AND (v.merchant IS NULL OR v.merchant = '')))"]
+        params = [int(include_uncategorized)]
+    if q_norm:
+        where.append(
+            "instr(lower(regexp_replace(v.description, '\\s+', ' ', 'g')),"
+            " lower(?)) > 0")
+        params.append(q_norm)
+    where_sql = " AND ".join(where)
+
+    total, = con.execute(f"""
+        SELECT COUNT(*)
+        FROM effective_transactions AS v
+        WHERE {where_sql}
+    """, params).fetchone()
+
+    pending = 0
+    if include_uncategorized:
+        pending, = con.execute("""
+            SELECT COUNT(*)
+            FROM effective_transactions AS v
+            WHERE v.merchant IS NULL OR v.merchant = ''
+        """).fetchone()
+
+    rows = con.execute(f"""
+        SELECT v.id, v.source, v.account, CAST(v.txn_date AS VARCHAR),
+               v.amount, v.description, v.merchant,
+               v.merchant_source,
+               (COALESCE(v.category, '') = 'Ignored'
+                OR COALESCE(v.date_ignored, false)) AS ignored
+        FROM effective_transactions AS v
+        WHERE {where_sql}
+        ORDER BY {_MERCHANT_SORTS[sort_by]} {sort_dir}, v.id ASC
+        LIMIT ?
+    """, [*params, int(limit)]).fetchall()
+
+    enabled = merchants.load_rules(con)
+    out = []
+    for r in rows:
+        matched = merchants.matching_rules(r[5], enabled,
+                                           source=r[1], account=r[2])
+        # Resolve set_by from the view's merchant_source: manual/llm
+        # override, rule match, or nothing (pending).
+        resolved = r[7]
+        has_merchant = bool(r[6])
+        if not has_merchant:
+            set_by = "uncategorized"
+        elif resolved:
+            set_by = resolved
+        elif matched:
+            set_by = "rule"
+        else:
+            set_by = "unknown"
+        out.append({
+            "id": r[0], "source": r[1], "account": r[2], "date": r[3],
+            "amount": r[4], "description": r[5],
+            "merchant": r[6],
+            "set_by": set_by,
+            "ignored": bool(r[8]),
+            "rule_match": ({"pattern": matched[0].pattern,
+                            "merchant": matched[0].merchant,
+                            "position": matched[0].position}
+                           if matched else None),
+            "rule_matches": len(matched),
+        })
+    return {"rows": out, "total": int(total), "uncategorized": int(pending)}

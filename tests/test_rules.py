@@ -4,7 +4,7 @@ whitespace normalization, reorder, and the optional source/account scope."""
 import duckdb
 import pytest
 
-from app import date_ignores, imports, ingest, rules
+from app import date_ignores, imports, ingest, merchants, rules
 
 
 def _conn(tmp_path, name="rules.db"):
@@ -20,6 +20,10 @@ def _conn(tmp_path, name="rules.db"):
     con.execute(date_ignores.CREATE_DATE_IGNORES_SQL)
     con.execute(imports.CREATE_IMPORTS_SQL)
     imports.ensure_import_column(con)
+    con.execute(merchants.CREATE_MERCHANT_RULES_SQL)
+    merchants.ensure_rule_position(con)
+    merchants.ensure_rule_scope(con)
+    con.execute(merchants.CREATE_MERCHANT_OVERRIDES_SQL)
     con.execute(ingest.CREATE_EFFECTIVE_VIEW_SQL)
     return con
 
