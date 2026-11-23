@@ -53,15 +53,7 @@
 
   <section class="section">
     <div class="section-head">
-      <h2>Spend by category</h2>
-      <span class="hint">all time · click a row to drill down</span>
-    </div>
-    <div class="panel tight" id="catTable"></div>
-  </section>
-
-  <section class="section">
-    <div class="section-head">
-      <h2>Account flow</h2>
+      <h2>Money Flow</h2>
       <div class="catpick" id="skAcctPick">
         <button type="button" class="catpick-btn" id="skAcctPickBtn"
                 aria-haspopup="true" aria-expanded="false">
@@ -84,6 +76,15 @@
     </div>
     <div class="panel"><div class="chart-wrap sankey"><canvas id="sankeyChart"></canvas></div></div>
   </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Spend by category</h2>
+      <span class="hint">all time · click a row to drill down</span>
+    </div>
+    <div class="panel tight" id="catTable"></div>
+  </section>
+
 </main>
 <div class="toast" id="toast"></div>
 <div id="modal-root"></div>
@@ -94,7 +95,7 @@ window.onDataChanged = renderAll;
 let _flowCfg = null; // last chart config, so the view toggle re-draws
                      // without refetching
 
-/* ------------------------------ account flow (sankey) */
+/* ------------------------------ money flow (sankey) */
 /* The sankey is a 3-column flow — NET-POSITIVE (income) categories
  * on the LEFT, accounts in the MIDDLE, NET-NEGATIVE (spend)
  * categories on the RIGHT — and is filtered by two multiselect

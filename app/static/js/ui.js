@@ -901,7 +901,8 @@ function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet') {
   const wrap = canvas.parentElement;
   const hint = wrap.querySelector('.chart-empty');
   if (hint) hint.remove();
-  if (!flows.length) { // no data: muted hint in the fixed-height wrap
+  if (!flows.length) { // no data: muted hint in a compact wrap
+    wrap.style.height = '280px';
     const h = document.createElement('div'); // (panel never hidden —
     h.className = 'chart-empty'; // stable space, like the other charts)
     h.textContent = emptyMsg;
@@ -959,6 +960,14 @@ function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet') {
     labels.push(l);
     column[l] = col;
   }
+  // Size the wrap to the tallest column instead of a fixed 640px: the
+  // plugin packs columns from the top, so an oversized wrap just leaves
+  // dead space below the bands. ~48px per node (node ~30px + nodePadding
+  // 14 + margin), clamped so a dense chart still gets the old 640px.
+  const colCount = [0, 0, 0];
+  for (const l of labels) colCount[column[l]]++;
+  const maxCol = Math.max(...colCount);
+  wrap.style.height = Math.max(280, Math.min(640, maxCol * 48 + 48)) + 'px';
   const nodeIndex = new Map(labels.map((l, i) => [l, i]));
   const render = x => isAcctKey(x) ? acctLabel(x) : x;
   const labelTotal = {};
