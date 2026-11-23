@@ -48,6 +48,7 @@ function renderChrome(active) {
       <nav>
         <a href="/" class="${active === 'home' ? 'active' : ''}">Overview</a>
         <a href="/categories" class="${active === 'categories' ? 'active' : ''}">Categories</a>
+        <a href="/merchants" class="${active === 'merchants' ? 'active' : ''}">Merchants</a>
         <a href="/transactions" class="${active === 'transactions' ? 'active' : ''}">Transactions</a>
         <a href="/year" class="${active === 'year' ? 'active' : ''}">Year</a>
         <a href="/month" class="${active === 'month' ? 'active' : ''}">Month</a>

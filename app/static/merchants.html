@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<!-- Apply the saved color scheme (mercury.theme) before first paint
+     so there is no flash of the default scheme. -->
+<script>try { var _t = localStorage.getItem('mercury.theme'); if (_t) document.documentElement.dataset.theme = _t; } catch (e) {}</script>
+<link rel="icon" href="/static/img/favicon.ico" />
+<link rel="apple-touch-icon" sizes="180x180" href="/static/img/apple-touch-icon.png" />
+<title>Mercury — Merchants</title>
+<link rel="stylesheet" href="/static/css/app.css" />
+<script src="/static/vendor/chart.umd.min.js"></script>
+<script src="/static/vendor/chartjs-chart-sankey.min.js"></script>
+<script src="/static/js/common.js"></script>
+<script src="/static/js/ui.js"></script>
+</head>
+<body>
+<div id="site-header"></div>
+<main>
+  <section class="section">
+    <div class="section-head">
+      <h2>Money Flow</h2>
+      <div class="catpick" id="skAcctPick">
+        <button type="button" class="catpick-btn" id="skAcctPickBtn"
+                aria-haspopup="true" aria-expanded="false">
+          <span id="skAcctPickLabel">…</span><span class="catpick-caret">▾</span>
+        </button>
+        <div class="catpick-menu" id="skAcctPickMenu" role="listbox"
+             aria-multiselectable="true"
+             aria-label="Accounts in the flow chart"></div>
+      </div>
+      <div class="catpick" id="skCatPick">
+        <button type="button" class="catpick-btn" id="skCatPickBtn"
+                aria-haspopup="true" aria-expanded="false">
+          <span id="skCatPickLabel">…</span><span class="catpick-caret">▾</span>
+        </button>
+        <div class="catpick-menu" id="skCatPickMenu" role="listbox"
+             aria-multiselectable="true"
+             aria-label="Spend categories in the flow chart"></div>
+      </div>
+      <span class="hint">all time · income in, spend out · ignored rows excluded</span>
+    </div>
+    <div class="panel"><div class="chart-wrap sankey"><canvas id="sankeyChart"></canvas></div></div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+<div id="modal-root"></div>
+
+<script>
+/* ------------------------------ money flow (sankey) */
+/* The sankey is a 3-column flow — NET-POSITIVE (income) categories
+ * on the LEFT, accounts in the MIDDLE, NET-NEGATIVE (spend)
+ * categories on the RIGHT — and is filtered by two multiselect
+ * pickers (the Categories-page catpick pattern): the accounts menu
+ * lists every payload account (default: ALL of them), the categories
+ * menu lists every NET-NEGATIVE category (first-visit default: the
+ * top 8 by DEBIT spend), and every net-negative category not
+ * individually selected aggregates into one "All other" node (on by
+ * default, checkable). Each category is classified by its NET
+ * position (credit − debit) across the whole payload: net positive →
+ * left (credit flows only), net negative → right (debit flows only),
+ * net zero → not shown at all. The picker controls the right side
+ * only — the left side always renders in full: there are 1–2 income
+ * categories and hiding income would be nonsense, so none of them
+ * are listed. A v1.6.0 saved selection may name net-positive
+ * categories (its top-8-by-gross default) — normalization drops them
+ * silently; they render regardless. The
+ * selection persists in localStorage
+ * (mercury.sankeySel: {accounts, categories, allOther} — a missing
+ * allOther key reads as true, so v1.4.0 state migrates cleanly) and
+ * the filtering is CLIENT-SIDE over the cached /api/sankey payload —
+ * toggling a box redraws instantly with no refetch, and the API keeps
+ * returning the full honest all-time payload (sign-split per row).
+ *
+ * Duplicated from Overview on purpose (duplication OK per sr1us) — the
+ * localStorage selection (mercury.sankeySel) is SHARED across both
+ * pages, so a picker toggle on either page redraws both.
+ */
+const SK_LS = 'mercury.sankeySel';
+const SK_ALL_OTHER = 'All other'; // node + menu entry for the catch-all
+let _skFlows = null; // full /api/sankey payload (all time)
+
+// Same (source, account) identity makeSankeyChart uses for node keys —
+// two banks can share an account name ("Checking").
+const skAcctKey = f => f.source + '\u0000' + f.account;
+
+function skSaved() {
+  try {
+    const v = localStorage.getItem(SK_LS);
+    if (v === null) return null; // never saved
+    const o = JSON.parse(v);
+    return (o && typeof o === 'object' && !Array.isArray(o)) ? o : null;
+  } catch (e) { return null; }
+}
+function skSave(o) {
+  try { localStorage.setItem(SK_LS, JSON.stringify(o)); } catch (e) {}
+}
+
+/* v1.4.0 saved state has no allOther key — read it as TRUE (the
+ * catch-all is on by default, so a pre-existing selection keeps
+ * rendering the same chart it always did). */
+const skAllOther = o => !o || o.allOther !== false;
+
+/* Account options: every (source, account) in the payload, alphabetical;
+ * duplicate names are disambiguated with the source prefix, mirroring
+ * makeSankeyChart's node labels. [[key, label], …] */
+function skAcctOptions() {
+  const m = new Map();
+  for (const f of _skFlows || []) {
+    const k = skAcctKey(f);
+    if (!m.has(k)) m.set(k, f);
+  }
+  const dups = new Set([...m.values()].map(f => f.account)
+    .filter((n, i, all) => all.indexOf(n) !== i));
+  return [...m.entries()].sort((a, b) =>
+      a[1].account.localeCompare(b[1].account) ||
+      a[1].source.localeCompare(b[1].source))
+    .map(([k, f]) => [k, dups.has(f.account)
+      ? f.source + ' · ' + f.account : f.account]);
+}
+
+/* Category menu: the NET-NEGATIVE (spend) categories as individual
+ * options — per-category DEBIT totals from the payload, debit-spend-
+ * desc with name asc on ties (so the head of the list IS the top-N-by-
+ * debit the first-visit default checks; computed from the chart's
+ * own data so the menu and the "All other" bucket always agree on
+ * which spend categories exist). The picker controls the RIGHT side
+ * of the 3-column flow only: net-positive categories (Income,
+ * Investing in the live data) never appear — they render in full on
+ * the left regardless of the selection (hiding income would be
+ * nonsense; there are 1–2 of them). The "All other" catch-all still
+ * aggregates the net-negative categories that aren't individually
+ * selected. A v1.6.0 saved selection may name net-positive
+ * categories (its top-8-by-gross default) — skPickers' normalization
+ * drops them; they render regardless. A category whose NET position
+ * is zero is neither left nor right — it is not shown at all. */
+const SK_DEFAULT_CATS = 8; // first-visit default: top 8 by DEBIT spend
+function skCatList() {
+  const debit = {}, net = {};
+  for (const f of _skFlows || []) {
+    debit[f.category] = (debit[f.category] || 0) + (f.debit || 0);
+    net[f.category] = (net[f.category] || 0)
+      + ((f.credit || 0) - (f.debit || 0));
+  }
+  return Object.keys(debit)
+    .filter(c => (net[c] || 0) < 0)
+    .sort((a, b) => debit[b] - debit[a] || a.localeCompare(b));
+}
+
+/* Rebuild both menus from the cached payload + current selection
+ * (called on every renderAll, so rule/import changes reshuffle the
+ * options; idempotent). */
+function skPickers() {
+  const acctOpts = skAcctOptions();
+  const cats = skCatList();
+  const catOpts = cats.map(c => [c, c]);
+  const opts = { accounts: acctOpts.map(o => o[0]),
+                 categories: cats };
+  const saved = skSaved();
+  const allOther = skAllOther(saved);
+  const sel = {};
+  for (const which of ['accounts', 'categories']) {
+    if (!opts[which].length) {
+      // Empty DB: nothing to normalize against — keep the stored list
+      // (or none) so a first paint can't burn the default.
+      sel[which] = saved && Array.isArray(saved[which])
+        ? saved[which].filter(x => typeof x === 'string') : [];
+      continue;
+    }
+    // A saved selection is respected as-is (a saved [] stays []),
+    // normalized to names that still exist in the menu; first visit →
+    // the first-paint default: accounts = the WHOLE menu, categories
+    // = only the top 8 by DEBIT spend — the menu lists every DEBIT
+    // category, so defaulting to the whole menu would check all of
+    // them and (with allOther on) leave the "All other" bucket empty.
+    // Normalization against the net-negative-only menu is also what
+    // migrates v1.6.0 state: a saved top-8-by-gross selection may
+    // name net-positive categories (Income/Investing) — they drop
+    // out here silently and still render on the left, since the
+    // credit side is always full.
+    sel[which] = saved && Array.isArray(saved[which])
+      ? [...new Set(saved[which].filter(
+          x => typeof x === 'string' && opts[which].includes(x)))]
+      : which === 'categories'
+        ? opts.categories.slice(0, SK_DEFAULT_CATS)
+        : opts.accounts.slice();
+  }
+  // Persist the default once real data exists (stable across reloads);
+  // skip on a first paint with no data so it can't pre-empt imports.
+  if (saved !== null || opts.accounts.length || opts.categories.length)
+    skSave({ accounts: sel.accounts, categories: sel.categories,
+             allOther });
+  paintSkPicker('accounts', acctOpts, sel.accounts, allOther);
+  paintSkPicker('categories', catOpts, sel.categories, allOther);
+  renderSankeyChart();
+}
+
+function paintSkPicker(which, opts, sel, allOther) {
+  const menu = $id(which === 'accounts' ? 'skAcctPickMenu' : 'skCatPickMenu');
+  // The "All other" row is a fixed entry, not data-driven: no key in the
+  // HTML at all (a data-val would round-trip the U+0000-bearing key —
+  // and it has none), just a data-all-other marker + its own handler.
+  menu.innerHTML = opts.map(([v, l], i) => `
+    <label class="catpick-item">
+      <input type="checkbox" data-idx="${i}"
+             ${sel.includes(v) ? 'checked' : ''}>
+      ${which === 'categories'
+        ? `<span class="dot" style="background:${catColor(v)}"></span>` : ''}
+      <span>${esc(l)}</span>
+    </label>`).join('') + (which === 'categories' ? `
+    <label class="catpick-item sk-all-other">
+      <input type="checkbox" data-all-other
+             ${allOther ? 'checked' : ''}>
+      <span class="dot" style="background:${catColor(SK_ALL_OTHER)}"></span>
+      <span>${esc(SK_ALL_OTHER)}</span>
+    </label>` : '');
+  // Keys embed U+0000 (the source/account separator), which the HTML
+  // tokenizer rewrites to U+FFFD inside an attribute string — so the
+  // key is never written into the HTML. The index attribute points
+  // into opts; data-val is assigned via the DOM API (no re-parse),
+  // which keeps the real key inspectable for tests.
+  menu.querySelectorAll('input[data-idx]').forEach((inp, i) => {
+    inp.dataset.val = opts[i][0];
+    inp.addEventListener('change', () => {
+      const val = opts[+inp.dataset.idx][0];
+      const saved = skSaved() || {};
+      // Re-read the stored list (not the closure's snapshot) so rapid
+      // toggles accumulate instead of overwriting each other.
+      const cur = Array.isArray(saved[which])
+        ? saved[which].filter(x => typeof x === 'string') : [];
+      const next = cur.filter(x => x !== val);
+      if (inp.checked) next.push(val);
+      saved[which] = next;
+      skSave(saved);
+      paintSkLabel(which, next, opts, skAllOther(skSaved()));
+      renderSankeyChart();
+    });
+  });
+  const ao = menu.querySelector('input[data-all-other]');
+  if (ao) ao.addEventListener('change', () => {
+    const saved = skSaved() || {};
+    saved.allOther = ao.checked;
+    skSave(saved);
+    paintSkLabel('categories',
+      Array.isArray(saved.categories) ? saved.categories : [],
+      opts, ao.checked);
+    renderSankeyChart();
+  });
+  paintSkLabel(which, sel, opts, allOther);
+}
+
+function paintSkLabel(which, sel, opts, allOther) {
+  const label = v => which === 'accounts'
+    ? (opts.find(o => o[0] === v)?.[1] ?? v) : v;
+  let text;
+  if (which === 'categories' && allOther) {
+    // Catch-all on: the count names how many categories are spelled
+    // out individually; "all other" covers the rest of the payload.
+    text = sel.length
+      ? sel.length + ' + ' + SK_ALL_OTHER.toLowerCase()
+      : SK_ALL_OTHER.toLowerCase();
+  } else {
+    text = !sel.length
+      ? (which === 'accounts' ? 'No accounts' : 'No categories')
+      : sel.length === 1 ? label(sel[0])
+      : sel.length === 2 ? label(sel[0]) + ' + ' + label(sel[1])
+      : sel.length + (which === 'accounts' ? ' accounts' : ' categories');
+  }
+  $id(which === 'accounts' ? 'skAcctPickLabel' : 'skCatPickLabel')
+    .textContent = text;
+}
+
+function wireSkPickers() {
+  const pickers = [
+    { btn: $id('skAcctPickBtn'), menu: $id('skAcctPickMenu') },
+    { btn: $id('skCatPickBtn'), menu: $id('skCatPickMenu') },
+  ];
+  const close = p => {
+    p.menu.style.display = 'none';
+    p.btn.setAttribute('aria-expanded', 'false');
+  };
+  pickers.forEach((p, i) => {
+    p.btn.addEventListener('click', e => {
+      e.stopPropagation();
+      // Computed, not inline, style: the menu's initial inline display
+      // is empty (CSS says none), so the inline check misfires on
+      // click one (catTrend note).
+      const open = getComputedStyle(p.menu).display !== 'none';
+      if (!open) close(pickers[1 - i]); // only one menu open at a time
+      p.menu.style.display = open ? 'none' : 'block';
+      p.btn.setAttribute('aria-expanded', String(!open));
+    });
+    p.menu.addEventListener('click', e => e.stopPropagation());
+  });
+  document.addEventListener('click', () => pickers.forEach(close));
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') pickers.forEach(close);
+  });
+}
+
+/* The chart over the cached payload, restricted to the pickers'
+ * selections. The picker controls the RIGHT side only: individually
+ * selected net-negative (spend) categories keep their own nodes, and
+ * with the "All other" catch-all on, every remaining net-negative
+ * category aggregates into a single "All other" node — one flow per
+ * account (that account's summed debit into the bucket) — so
+ * toggling an individual box moves its SPEND between the node and
+ * the bucket. The bucket is always "debit payload − individually
+ * selected". Each category is classified by its NET position across
+ * the whole payload: net positive → left (credit flows only), net
+ * negative → right (debit flows only), net zero → not shown at all.
+ * The opposite-sign flow of a classified category is not rendered —
+ * the chart is a left-to-right flow, and a flow into the left column
+ * (or out of the right column) would break the 3-column structure.
+ * Edges are oriented for the 3-column layout: credit flows run
+ * category → account (left → middle), debit flows run account →
+ * category (middle → right). The CREDIT side always renders in full
+ * — no filtering, no bucket — so a net-positive category appears on
+ * the left regardless of the picker. */
+function renderSankeyChart() {
+  const saved = skSaved() || {};
+  const a = new Set(Array.isArray(saved.accounts) ? saved.accounts : []);
+  const indiv = new Set(Array.isArray(saved.categories)
+    ? saved.categories : []);
+  const allOther = skAllOther(saved);
+  // Net per category across the whole payload (before the account
+  // filter — the side a category sits on must not depend on which
+  // accounts are picked).
+  const net = {};
+  for (const f of _skFlows || [])
+    net[f.category] = (net[f.category] || 0)
+      + ((f.credit || 0) - (f.debit || 0));
+  const flows = [];
+  const bucket = new Map();
+  for (const f of _skFlows || []) {
+    const k = skAcctKey(f);
+    if (!a.has(k)) continue;
+    const d = f.debit || 0, c = f.credit || 0;
+    const n = net[f.category] || 0;
+    if (n < 0 && d > 0) {
+      if (indiv.has(f.category))
+        flows.push({ from: k, to: f.category, flow: d });
+      else if (allOther) {
+        const b = bucket.get(k) || { source: f.source, account: f.account,
+                                      amount: 0 };
+        b.amount += d;
+        bucket.set(k, b);
+      }
+      // unchecked with the catch-all off: hidden (the picker's
+      // explicit intent — same as a spend category today)
+    }
+    if (n > 0 && c > 0)
+      flows.push({ from: f.category, to: k, flow: c });
+  }
+  if (allOther)
+    for (const b of bucket.values())
+      flows.push({ from: skAcctKey(b), to: SK_ALL_OTHER, flow: b.amount });
+  // Distinguish "nothing in the data" from "the filters hid it":
+  // credit always renders, so zero flows means no accounts selected,
+  // or every spend category unchecked with the catch-all off on
+  // accounts that have no credit either.
+  makeSankeyChart($id('sankeyChart'), flows,
+    !(_skFlows || []).length ? 'no transactions yet'
+      : !a.size ? 'pick at least one account'
+      : 'pick at least one spend category or "All other"');
+}
+
+async function renderSankeyPage() {
+  _skFlows = await api('/api/sankey');
+  skPickers();
+}
+
+window.onDataChanged = renderSankeyPage;
+
+(async function init() {
+  renderChrome('merchants');
+  wireSkPickers();
+  try {
+    await renderSankeyPage();
+  } catch (e) {
+    toast('Failed to load: ' + e.message, 8000);
+  }
+})();
+</script>
+</body>
+</html>
