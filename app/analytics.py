@@ -291,6 +291,40 @@ def sankey_flow(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
             for s, a, c, d, cr in rows]
 
 
+def sankey_merchants_flow(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
+    """Per-(account, category, merchant) sign-split movement for the
+    merchant column of the Overview Sankey.
+
+    One row per (source, account, effective category, effective
+    merchant) with any non-zero, non-ignored movement, split by sign:
+    ``debit`` is the sum of ABS over negative (spend) rows, ``credit``
+    the sum over positive (income) rows, and ``amount`` = debit +
+    credit (kept for backward compatibility with the pre-split shape).
+    ``merchant`` is the effective merchant (user/legacy-rule override >
+    rule layer > LLM > nothing); rows with no effective merchant carry
+    ``merchant=''``. Ignored rows are excluded, like every other
+    aggregate. All-period: the overview page shows full history.
+    """
+    rows = con.execute(f"""
+        SELECT * FROM (
+            SELECT source, account,
+                   COALESCE(category, 'Uncategorized') AS category,
+                   COALESCE(merchant, '') AS merchant,
+                   COALESCE(SUM(ABS(CASE WHEN amount < 0 THEN amount END)), 0) AS debit,
+                   COALESCE(SUM(ABS(CASE WHEN amount > 0 THEN amount END)), 0) AS credit
+            FROM effective_transactions
+            WHERE amount != 0 AND {NOT_IGNORED}
+            GROUP BY 1, 2, 3, 4
+        ) t
+        WHERE debit + credit > 0
+        ORDER BY source, account, debit + credit DESC
+    """).fetchall()
+    return [{"source": s, "account": a, "category": c, "merchant": m,
+             "debit": round(d, 2), "credit": round(cr, 2),
+             "amount": round(d + cr, 2)}
+            for s, a, c, m, d, cr in rows]
+
+
 def unknown_categories(con: duckdb.DuckDBPyConnection,
                        limit: int = 200) -> list[dict[str, Any]]:
     rows = con.execute("""

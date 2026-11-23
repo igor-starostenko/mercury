@@ -123,6 +123,7 @@ let _flowCfg = null; // last chart config, so the view toggle re-draws
 const SK_LS = 'mercury.sankeySel';
 const SK_ALL_OTHER = 'All other'; // node + menu entry for the catch-all
 let _skFlows = null; // full /api/sankey payload (all time)
+let _skMerchants = null; // full /api/sankey-merchants payload (all time)
 
 // Same (source, account) identity makeSankeyChart uses for node keys —
 // two banks can share an account name ("Checking").
@@ -376,6 +377,7 @@ function renderSankeyChart() {
       + ((f.credit || 0) - (f.debit || 0));
   const flows = [];
   const bucket = new Map();
+  const bucketMerch = new Map();
   for (const f of _skFlows || []) {
     const k = skAcctKey(f);
     if (!a.has(k)) continue;
@@ -399,6 +401,28 @@ function renderSankeyChart() {
   if (allOther)
     for (const b of bucket.values())
       flows.push({ from: skAcctKey(b), to: SK_ALL_OTHER, flow: b.amount });
+  // Merchant column: each rendered spend category (or the "All
+  // other" bucket) fans out to its effective merchants. Only the
+  // spend side — income categories never show merchants. Rows with
+  // no effective merchant render no merchant edge (the category
+  // still renders).
+  const merchKey = m => '\u0001' + m;
+  for (const f of _skMerchants || []) {
+    if (!f.merchant) continue;
+    const k = skAcctKey(f);
+    if (!a.has(k)) continue;
+    const d = f.debit || 0;
+    if (d <= 0) continue;
+    const n = net[f.category] || 0;
+    if (n >= 0) continue; // spend side only
+    if (indiv.has(f.category))
+      flows.push({ from: f.category, to: merchKey(f.merchant), flow: d });
+    else if (allOther)
+      bucketMerch.set(f.merchant, (bucketMerch.get(f.merchant) || 0) + d);
+  }
+  if (allOther)
+    for (const [m, amt] of bucketMerch)
+      flows.push({ from: SK_ALL_OTHER, to: merchKey(m), flow: amt });
   // Distinguish "nothing in the data" from "the filters hid it":
   // credit always renders, so zero flows means no accounts selected,
   // or every spend category unchecked with the catch-all off on
@@ -410,7 +434,7 @@ function renderSankeyChart() {
 }
 
 async function renderAll() {
-  const [summary, monthly, years, cats, accounts, sankeyFlows] =
+  const [summary, monthly, years, cats, accounts, sankeyFlows, sankeyMerchants] =
     await Promise.all([
     api('/api/summary'),
     api('/api/monthly'),
@@ -418,6 +442,7 @@ async function renderAll() {
     api('/api/categories'),
     api('/api/accounts'),
     api('/api/sankey'),
+    api('/api/sankey-merchants'),
   ]);
 
   $id('emptyHint').style.display = summary.n_transactions ? 'none' : 'block';
@@ -456,9 +481,11 @@ async function renderAll() {
   // Category totals with drill-down.
   renderCategoryTable($id('catTable'), cats, {});
 
-  // Sankey: each account → its categories (all time), filtered
-  // client-side by the account/category pickers (see sk* above).
+  // Sankey: each account → its categories → its merchants (all
+  // time), filtered client-side by the account/category pickers
+  // (see sk* above).
   _skFlows = sankeyFlows;
+  _skMerchants = sankeyMerchants || [];
   skPickers();
 
   // Accounts.

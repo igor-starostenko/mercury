@@ -243,6 +243,23 @@ def categories(year: str | None = None, month: str | None = None):
         con.close()
 
 
+@app.get("/api/sankey-merchants")
+def sankey_merchants():
+    """Merchant column of the Overview Sankey: per
+    (source, account, effective category, effective merchant)
+    sign-split movement (debit = SUM(ABS(amount)) over negative rows,
+    credit over positive rows, amount = debit + credit) — the client
+    fans each rendered spend category (or the "All other" bucket) out
+    to its merchants. Rows with no effective merchant carry
+    merchant='' and render no merchant edge. Non-ignored, non-zero,
+    all time."""
+    con = get_con()
+    try:
+        return analytics.sankey_merchants_flow(con)
+    finally:
+        con.close()
+
+
 @app.get("/api/accounts")
 def accounts():
     con = get_con()
