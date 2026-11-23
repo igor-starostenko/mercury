@@ -43,6 +43,33 @@
     </div>
     <div class="panel"><div class="chart-wrap sankey"><canvas id="sankeyChart"></canvas></div></div>
   </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Match merchants</h2>
+      <span class="badge" id="mrShownCount" aria-live="polite"></span>
+      <button class="primary" id="mrClassifyBtn" onclick="runMerchantClassify()">Classify unknown (LLM)</button>
+      <span class="hint" id="mrHint"></span>
+    </div>
+    <div class="panel" id="mrPanel">
+      <form class="rule-form" id="mrRuleForm" onsubmit="addMrRule(event)">
+        <select id="mrSetBySel" class="setby-sel" aria-label="Filter rows by who set the merchant">
+          <option value="all">All</option>
+        </select>
+        <input id="mrSearch" type="text" maxlength="200"
+               placeholder="Keyword, e.g. 'walmart'"
+               aria-label="Search transactions by description">
+        <span class="form-sep" aria-hidden="true"></span>
+        <input id="mrMerchant" type="text" maxlength="100" placeholder="Merchant (e.g. Walmart)"
+               aria-label="Merchant for the new rule" disabled>
+        <select id="mrScopeSource" disabled aria-label="Source scope"
+                onchange="scopeSourceChanged('mr')"></select>
+        <select id="mrScopeAccount" disabled aria-label="Account scope"></select>
+        <button type="submit" id="mrAddRuleBtn" disabled>Add rule</button>
+      </form>
+      <div id="merchantsList" style="min-height:120px"></div>
+    </div>
+  </section>
 </main>
 <div class="toast" id="toast"></div>
 <div id="modal-root"></div>
@@ -371,13 +398,213 @@ async function renderSankeyPage() {
   skPickers();
 }
 
-window.onDataChanged = renderSankeyPage;
+window.onDataChanged = async function () { await renderSankeyPage(); await loadMerchants(); };
+
+
+/* ------------------------------ Match merchants panel */
+/* Mirrors the Transactions page's categorization list — but the rule
+ * builder targets a free-form MERCHANT (no fixed vocabulary) and the
+ * per-row edit is a text input, not a category select. Provenance:
+ * user > rule > LLM > (nothing — the imported rows carry no merchant).
+ * Sort/filter run server-side via /api/merchants. */
+const MR_SET_BY = { manual: 'you', llm: 'LLM', rule: 'rule',
+                    uncategorized: 'pending', unknown: 'unknown' };
+const MR_SET_BY_OPTIONS = [
+  ['all', 'All'],
+  ['manual', 'Manual'],
+  ['llm', 'LLM'],
+  ['rule', 'Rule'],
+  ['uncategorized', 'Uncategorized'],
+];
+const MR_LIMIT = 1000;        // browse-view window (no search)
+const MR_SEARCH_LIMIT = 100000; // search: pull the FULL matching set
+let mrRows = [];
+let mrTotal = 0;
+let mrPendingTotal = 0;
+let mrFilter = 'all';
+let mrSearch = '';
+let mrSeq = 0;
+
+function mrQuery() {
+  const st = $id('merchantsList')._sortState || { key: 'date', dir: 'desc' };
+  const q = (mrSearch || '').trim();
+  const p = new URLSearchParams({
+    limit: String(q ? MR_SEARCH_LIMIT : MR_LIMIT),
+    include_uncategorized: 'true',
+    set_by: mrFilter, sort_by: st.key, sort_dir: st.dir, q: mrSearch,
+  });
+  return '/api/merchants?' + p.toString();
+}
+async function loadMerchants() {
+  const seq = ++mrSeq;
+  let data;
+  try {
+    data = await api(mrQuery());
+  } catch (e) {
+    if (seq === mrSeq) toast('Failed to load: ' + e.message, 8000);
+    return;
+  }
+  if (seq !== mrSeq) return;
+  mrRows = data.rows;
+  mrTotal = data.total;
+  mrPendingTotal = data.uncategorized;
+  renderMerchants();
+}
+
+function mrRuleNoteHTML(t) {
+  if (!t || !t.rule_match) return '';
+  const m = t.rule_match;
+  const active = t.set_by === 'rule';
+  const shadowed = Math.max(0, (t.rule_matches || 1) - 1);
+  const who = t.set_by === 'manual' ? 'you' : t.set_by;
+  const title = active
+    ? `Merchant comes from rule “${m.pattern}” (first match in priority order wins).`
+      + (shadowed ? ` ${shadowed} lower-priority rule${shadowed > 1 ? 's' : ''} also match${shadowed > 1 ? '' : 'es'} this description.` : '')
+    : `Matches rule “${m.pattern}” → ${m.merchant}, but the ${who} merchant wins (precedence: you > rule > LLM).`;
+  const extra = active
+    ? (shadowed ? ` · +${shadowed} shadowed` : '')
+    : ` · overridden (${who} wins)`;
+  return `<span class="rule-note${active ? ' rule-note-active' : ''}" title="${esc(title)}">${esc(`rule “${m.pattern}” → ${m.merchant}`)}${extra}</span>`;
+}
+
+function renderMerchants() {
+  const el = $id('merchantsList');
+  if (!el._sortState) el._sortState = { key: 'date', dir: 'desc' };
+  const st = el._sortState;
+  const rows = mrRows;
+  const q = (mrSearch || '').trim();
+  const qre = q ? txnSearchRegex(q) : null;
+  const noLlm = !window.LLM_CONFIGURED;
+  $id('mrClassifyBtn').disabled = !mrPendingTotal || noLlm;
+  $id('mrClassifyBtn').title = noLlm
+    ? 'LLM not configured — set both MERCURY_LLM_ENDPOINT and MERCURY_LLM_MODEL, then restart the server' : '';
+  $id('mrShownCount').textContent = (mrTotal > rows.length
+    ? rows.length + ' of ' + mrTotal + ' shown'
+    : rows.length + ' shown');
+  $id('mrHint').textContent = txnSearchHint(q, st,
+    noLlm && mrPendingTotal ? 'LLM not configured, Classify is disabled' : '');
+  if (!rows.length) {
+    el.innerHTML = '<p class="empty">'
+      + (q
+        ? `No matches for “${esc(q)}”.`
+        : (mrTotal
+          ? (mrFilter === 'uncategorized' ? 'All transactions have a merchant. 🎉'
+            : 'No ' + (MR_SET_BY[mrFilter] || mrFilter) + ' transactions.')
+          : 'No transactions yet.'))
+      + '</p>';
+    return;
+  }
+  el.innerHTML = `
+    <table>
+      <thead><tr>
+        ${txnSortTh('date', 'Date', null, st)}<th>Source</th>${txnSortTh('description', 'Description', null, st)}
+        ${txnSortTh('merchant', 'Merchant', null, st)}<th>Set by</th>${txnSortTh('amount', 'Amount', 'num', st)}
+      </tr></thead>
+      <tbody>${rows.map(t => `
+        <tr${t.ignored ? ' class="row-ignored"' : ''}>
+          <td>${esc(t.date)}</td>
+          <td>${esc(t.source)}</td>
+          <td class="desc" title="${esc(t.description)}">${highlightDesc(t.description, qre)}</td>
+          <td><input class="mr-input" data-id="${t.id}" value="${esc(t.merchant || '')}" placeholder="—" aria-label="Merchant for transaction ${t.id}">${mrRuleNoteHTML(t)}</td>
+          <td><span class="badge src-${esc(t.set_by)}">${esc(MR_SET_BY[t.set_by] || t.set_by)}</span></td>
+          <td class="num ${t.amount < 0 ? 'neg' : 'pos'}">${fmtMoney(t.amount)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+  wireMrInputs(el);
+  el._detailRender = () => loadMerchants();
+  wireTxnSort(el);
+}
+
+function wireMrInputs(root) {
+  root.querySelectorAll('input.mr-input').forEach(inp => {
+    inp.addEventListener('change', async () => {
+      const val = inp.value.trim();
+      try {
+        await api('/api/merchants/overrides', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: [+inp.dataset.id], merchant: val || null }),
+        });
+        toast(val ? 'Merchant updated' : 'Merchant cleared');
+        if (window.onDataChanged) setTimeout(onDataChanged, 400);
+      } catch (e) {
+        toast('Update failed: ' + e.message, 5000);
+      }
+    });
+  });
+}
+
+function syncMrRuleControls() {
+  const hasQ = !!$id('mrSearch').value.trim();
+  $id('mrMerchant').disabled = !hasQ;
+  $id('mrScopeSource').disabled = !hasQ;
+  $id('mrScopeAccount').disabled = !hasQ;
+  $id('mrAddRuleBtn').disabled = !hasQ;
+}
+
+async function addMrRule(e) {
+  e.preventDefault();
+  const pattern = $id('mrSearch').value.trim();
+  const merchant = $id('mrMerchant').value.trim();
+  if (!pattern || !merchant) {
+    toast('Type a keyword and a merchant first', 4000);
+    return;
+  }
+  const source = $id('mrScopeSource').value || null;
+  const account = $id('mrScopeAccount').value || null;
+  try {
+    await api('/api/merchants/rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pattern, merchant, source, account }),
+    });
+    toast('Rule added' + (source || account
+      ? ' (scoped: ' + [source, account].filter(Boolean).join(' · ') + ')'
+      : ''));
+    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  } catch (err) {
+    toast('Could not add rule: ' + err.message, 5000);
+  }
+}
+
+async function runMerchantClassify() {
+  toast('Classifying…');
+  try {
+    const res = await api('/api/merchants/classify', { method: 'POST' });
+    toast(`Classified ${res.classified} (${res.skipped} skipped)`);
+  } catch (e) {
+    toast('Classify failed: ' + e.message, 6000);
+  }
+  if (window.onDataChanged) setTimeout(onDataChanged, 400);
+}
+
+$id('mrSetBySel').innerHTML = MR_SET_BY_OPTIONS.map(([v, l]) =>
+  `<option value="${v}">${l}</option>`).join('');
+wireTxnSearchBar($id('mrSearch'), $id('mrSetBySel'),
+  ({ q, setBy }) => {
+    mrSearch = q;
+    mrFilter = setBy;
+    loadMerchants();
+  },
+  { debounceMs: 200, onInput: syncMrRuleControls });
 
 (async function init() {
   renderChrome('merchants');
   wireSkPickers();
   try {
-    await renderSankeyPage();
+    const [health, accounts] = await Promise.all([
+      api('/api/health'),
+      api('/api/accounts'),
+    ]);
+    window.LLM_CONFIGURED = !!health.llm_configured;
+    _accountsCache = accounts;
+    $id('mrScopeSource').innerHTML =
+      _scopeOptions(_scopeSources(accounts), 'All sources');
+    $id('mrScopeAccount').innerHTML =
+      _scopeOptions(_scopeAccounts(accounts, ''), 'All accounts');
+    syncMrRuleControls();
+    await Promise.all([renderSankeyPage(), loadMerchants()]);
   } catch (e) {
     toast('Failed to load: ' + e.message, 8000);
   }

@@ -266,3 +266,148 @@ def rule_classify(description: str) -> Optional[str]:
         if any(n in desc for n in needles):
             return cat
     return None
+
+
+# ---------------------------------------------------------------------------
+# Merchant classification
+# ---------------------------------------------------------------------------
+
+def classify_merchants_batch_llm(descriptions: list[str]) -> list[Optional[str]]:
+    """Extract the merchant (store/vendor) name for each description.
+
+    Returns a list the same length as `descriptions`; each entry is a
+    free-form merchant name or None when the description carries no
+    identifiable merchant (e.g. a payroll or a bank fee).
+
+    Mirrors classify_batch_llm: batches of BATCH_SIZE, a failing batch
+    falls back to a deterministic heuristic on its own; the rest of the
+    run continues. Raises LLMNotConfigured when the endpoint or model
+    is not configured.
+    """
+    if not descriptions:
+        return []
+    if not llm_configured():
+        raise LLMNotConfigured(
+            "LLM is not configured — set both MERCURY_LLM_ENDPOINT "
+            "and MERCURY_LLM_MODEL and restart the server")
+    results: list[Optional[str]] = []
+    n_batches = (len(descriptions) + BATCH_SIZE - 1) // BATCH_SIZE
+    for i in range(n_batches):
+        batch = descriptions[i * BATCH_SIZE:(i + 1) * BATCH_SIZE]
+        try:
+            batch_results = _call_merchant_llm(batch)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  local LLM unavailable ({exc}); rule-based fallback "
+                  f"for batch {i + 1}/{n_batches} ({len(batch)} descriptions)")
+            batch_results = [_fallback_merchant(d) for d in batch]
+        else:
+            print(f"  LLM merchant batch {i + 1}/{n_batches} done "
+                  f"({len(batch)} descriptions)")
+        results.extend(batch_results)
+    return results
+
+
+def _call_merchant_llm(descriptions: list[str]) -> list[Optional[str]]:
+    endpoint = llm_endpoint()
+    model = llm_model()
+
+    numbered = "\n".join(f"{i}. {d}" for i, d in enumerate(descriptions))
+    prompt = (
+        "You are a personal-finance merchant extraction assistant. "
+        "For each transaction description, extract the merchant — the "
+        "store, vendor, or business the money went to or came from "
+        "(e.g. 'WALMART #123' -> 'Walmart', 'UBER TRIP 08/12' -> "
+        "'Uber'). Return ONLY a JSON array of " + str(len(descriptions)) +
+        " strings, in the same order, no commentary. "
+        "Use an empty string \"\" if the description names no merchant "
+        "(payroll, interest, bank fee, transfer between accounts).\n\n"
+        "Descriptions:\n" + numbered
+    )
+
+    headers = {"Content-Type": "application/json"}
+    api_key = os.environ.get("MERCURY_LLM_API_KEY")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    def post(payload: dict) -> dict:
+        req = urllib.request.Request(
+            endpoint, data=json.dumps(payload).encode("utf-8"),
+            headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError:
+            raise
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"cannot reach {endpoint}: {exc}") from exc
+
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0,
+    }
+    global _template_kwargs_supported
+    if _template_kwargs_supported is not False:
+        try:
+            data = post(dict(payload, chat_template_kwargs={
+                "enable_thinking": False}))
+        except urllib.error.HTTPError as exc:
+            if exc.code in (400, 422):
+                _template_kwargs_supported = False
+                data = post(payload)
+            else:
+                raise
+    else:
+        data = post(payload)
+
+    text = data["choices"][0]["message"]["content"]
+    return _parse_merchant_json_array(text, len(descriptions))
+
+
+def _parse_merchant_json_array(text: str, expected: int) -> list[Optional[str]]:
+    text = text.strip()
+    start = text.find("[")
+    end = text.rfind("]")
+    candidate = text[start:end + 1] if (start != -1 and end > start) else text
+    arr = None
+    try:
+        arr = json.loads(candidate)
+    except json.JSONDecodeError:
+        arr = None
+    if isinstance(arr, list):
+        out: list[Optional[str]] = []
+        for i in range(expected):
+            val = arr[i] if i < len(arr) else None
+            if isinstance(val, str):
+                val = val.strip()
+                val = val if val else None
+            else:
+                val = None
+            out.append(val)
+        return out
+    # Strict parse failed: salvage the quoted strings in order.
+    vals = re.findall(r'"([^"]*)"', text)
+    out = []
+    for i in range(expected):
+        val = vals[i].strip() if i < len(vals) else None
+        out.append(val if val else None)
+    return out
+
+
+def _fallback_merchant(description: str) -> Optional[str]:
+    """Deterministic merchant heuristic (offline fallback).
+
+    Takes the first 1–3 tokens of the description that do not look like
+    a date or a bare amount — a rough store name. Returns None when the
+    description has no usable tokens (payroll, interest, bank fee).
+    """
+    d = (description or "").strip()
+    if not d:
+        return None
+    tokens = [t for t in re.split(r"[^A-Za-z0-9&'.-]+", d)
+              if t and not re.fullmatch(r"\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?", t)
+              and not re.fullmatch(r"\d+(?:\.\d+)?", t)]
+    if not tokens:
+        return None
+    head = " ".join(tokens[:3]).strip()
+    return head if len(head) >= 3 else None

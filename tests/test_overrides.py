@@ -17,7 +17,7 @@ provenance scope, and a plain browse keeps the section's base set.
 
 import duckdb
 
-from app import analytics, date_ignores, ingest, imports, rules
+from app import analytics, date_ignores, ingest, imports, merchants, rules
 
 N = 2400  # comfortably above the old client-side 1000 window (1200 match)
 
@@ -35,6 +35,10 @@ def _conn(tmp_path, name="overrides.db"):
     con.execute(date_ignores.CREATE_DATE_IGNORES_SQL)
     con.execute(imports.CREATE_IMPORTS_SQL)
     imports.ensure_import_column(con)
+    con.execute(merchants.CREATE_MERCHANT_RULES_SQL)
+    merchants.ensure_rule_position(con)
+    merchants.ensure_rule_scope(con)
+    con.execute(merchants.CREATE_MERCHANT_OVERRIDES_SQL)
     con.execute(ingest.CREATE_EFFECTIVE_VIEW_SQL)
     return con
 

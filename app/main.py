@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ingest, analytics, llm, rules, date_ignores, imports
+from . import ingest, analytics, llm, rules, merchants, date_ignores, imports
 
 DB_PATH = ingest.DB_PATH
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -59,6 +59,12 @@ async def lifespan(_: FastAPI):
         # label (csv_imports.account) for the Manage Imports rename.
         con.execute(imports.CREATE_IMPORTS_SQL)
         imports.ensure_import_column(con)
+        # Merchant tables must exist before the view: the view's merchant
+        # layer reads merchant_overrides and merchant_rules.
+        con.execute(merchants.CREATE_MERCHANT_RULES_SQL)
+        merchants.ensure_rule_position(con)
+        merchants.ensure_rule_scope(con)
+        con.execute(merchants.CREATE_MERCHANT_OVERRIDES_SQL)
         con.execute(ingest.CREATE_EFFECTIVE_VIEW_SQL)
         # One-time migration: move pre-override categories (rule/LLM/
         # manual) out of the imported rows into category_overrides.
@@ -615,6 +621,190 @@ def delete_rule(rule_id: int):
         if not rules.delete_rule(con, rule_id):
             raise HTTPException(status_code=404, detail="rule not found")
         return {"deleted": rule_id}
+    finally:
+        con.close()
+
+
+# ---------------------------------------------------------------------------
+# Merchants — custom merchant rules + user-set merchant overrides
+# ---------------------------------------------------------------------------
+class MerchantRuleBody(BaseModel):
+    pattern: str
+    merchant: str
+    source: str | None = None
+    account: str | None = None
+
+
+class MerchantRuleUpdateBody(BaseModel):
+    merchant: str
+
+
+class MerchantRuleReorderBody(BaseModel):
+    ordered_ids: list[int]
+
+
+class MerchantSetBody(BaseModel):
+    # transaction ids to set, and the merchant to apply. An empty string
+    # or null removes the override (row reverts to the rule layer).
+    ids: list[int]
+    merchant: str | None = None
+
+
+@app.get("/api/merchants/rules")
+def list_merchant_rules():
+    con = get_con()
+    try:
+        rule_list = merchants.load_rules(con, enabled_only=False)
+        enabled = [r for r in rule_list if r.enabled]
+        matches = merchants.match_counts(con, enabled)
+        return {
+            "rules": [{"id": r.id, "pattern": r.pattern,
+                       "merchant": r.merchant, "enabled": r.enabled,
+                       "position": r.position,
+                       "source": r.source, "account": r.account,
+                       "matches": matches.get(r.id, 0)}
+                      for r in rule_list],
+        }
+    finally:
+        con.close()
+
+
+@app.post("/api/merchants/rules")
+def create_merchant_rule(body: MerchantRuleBody):
+    con = get_con()
+    try:
+        try:
+            r = merchants.create_rule(con, body.pattern, body.merchant,
+                                      source=body.source,
+                                      account=body.account)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"id": r.id, "pattern": r.pattern,
+                "merchant": r.merchant, "enabled": True,
+                "position": r.position,
+                "source": r.source, "account": r.account}
+    finally:
+        con.close()
+
+
+@app.put("/api/merchants/rules/{rule_id}")
+def update_merchant_rule(rule_id: int, body: MerchantRuleUpdateBody):
+    con = get_con()
+    try:
+        try:
+            r = merchants.update_rule_merchant(con, rule_id, body.merchant)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if r is None:
+            raise HTTPException(status_code=404, detail="rule not found")
+        return {"id": r.id, "pattern": r.pattern, "merchant": r.merchant,
+                "enabled": r.enabled, "position": r.position,
+                "source": r.source, "account": r.account}
+    finally:
+        con.close()
+
+
+@app.post("/api/merchants/rules/reorder")
+def reorder_merchant_rules(body: MerchantRuleReorderBody):
+    con = get_con()
+    try:
+        try:
+            ordered = merchants.reorder_rules(con, body.ordered_ids)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"order": [r.id for r in ordered]}
+    finally:
+        con.close()
+
+
+@app.delete("/api/merchants/rules/{rule_id}")
+def delete_merchant_rule(rule_id: int):
+    con = get_con()
+    try:
+        if not merchants.delete_rule(con, rule_id):
+            raise HTTPException(status_code=404, detail="rule not found")
+        return {"deleted": rule_id}
+    finally:
+        con.close()
+
+
+@app.get("/api/merchants")
+def merchant_rows_route(limit: int = 200,
+                        include_uncategorized: bool = False,
+                        set_by: str = "all",
+                        sort_by: str = "date",
+                        sort_dir: str | None = None,
+                        q: str | None = None):
+    """Transactions with an effective merchant (or all, for search).
+
+    ``set_by``: 'all' (default), 'manual', 'llm', 'rule', 'uncategorized'.
+    ``q`` is a case-insensitive substring on the description.
+    """
+    con = get_con()
+    try:
+        return analytics.merchant_rows(
+            con, limit=limit,
+            include_uncategorized=include_uncategorized,
+            set_by=set_by, sort_by=sort_by, sort_dir=sort_dir, q=q)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        con.close()
+
+
+@app.post("/api/merchants/overrides")
+def set_merchant_overrides(body: MerchantSetBody):
+    """Set the merchant for a list of transactions (or clear it).
+
+    ``merchant`` empty/null clears the override, reverting the row to
+    the rule layer / LLM layer / nothing. The imported row is never
+    rewritten."""
+    con = get_con()
+    try:
+        for txn_id in body.ids:
+            try:
+                ok = merchants.set_merchant(con, txn_id, body.merchant,
+                                             source="manual")
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            if not ok:
+                raise HTTPException(status_code=404,
+                                   detail=f"transaction {txn_id} not found")
+        return {"set": len(body.ids), "merchant": body.merchant}
+    finally:
+        con.close()
+
+
+@app.post("/api/merchants/classify")
+def classify_merchants(limit: int = 200, set_by: str = "uncategorized"):
+    """LLM-classify the transactions that have no effective merchant.
+
+    Returns the number classified and the number skipped (empty
+    descriptions, no identifiable merchant, or endpoint failure)."""
+    con = get_con()
+    try:
+        rows = analytics.merchant_rows(con, limit=limit,
+                                       include_uncategorized=True,
+                                       set_by=set_by)
+        targets = rows["rows"]
+        if not targets:
+            return {"classified": 0, "skipped": 0}
+        descriptions = [r["description"] or "" for r in targets]
+        try:
+            guessed = llm.classify_merchants_batch_llm(descriptions)
+        except llm.LLMNotConfigured as e:
+            raise HTTPException(status_code=503, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        classified = 0
+        skipped = 0
+        for r, guess in zip(targets, guessed):
+            if guess:
+                merchants.set_merchant(con, r["id"], guess, source="llm")
+                classified += 1
+            else:
+                skipped += 1
+        return {"classified": classified, "skipped": skipped}
     finally:
         con.close()
 

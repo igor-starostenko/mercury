@@ -492,10 +492,26 @@ CREATE_EFFECTIVE_VIEW_SQL = """
              ELSE x.override_source
            END AS override_source,
            x.date_ignored,
-           x.raw_category, x.currency, x.key, x.classified
+           x.raw_category, x.currency, x.key, x.classified,
+           -- Effective merchant: user/legacy-rule override > rule layer
+           -- > LLM override > (no CSV merchant — the imported rows carry
+           -- none, so the merchant layer is entirely user/LLM/rule-defined).
+           CASE
+             WHEN x.merchant_override_source IN ('manual', 'rule')
+               THEN x.override_merchant
+             WHEN x.rule_merchant IS NOT NULL THEN x.rule_merchant
+             ELSE COALESCE(x.override_merchant, NULL)
+           END AS merchant,
+           CASE
+             WHEN x.merchant_override_source IN ('manual', 'rule')
+               THEN x.merchant_override_source
+             WHEN x.rule_merchant IS NOT NULL THEN 'rule'
+             ELSE x.merchant_override_source
+           END AS merchant_source
     FROM (
       SELECT t.*, ci.account AS import_account,
              o.category AS override_category, o.source AS override_source,
+             mo.merchant AS override_merchant, mo.source AS merchant_override_source,
              (SELECT r.category FROM category_rules r
               WHERE r.enabled AND r.pattern <> ''
                 -- Scope (NULL = All): the rule must admit this row.
@@ -515,6 +531,15 @@ CREATE_EFFECTIVE_VIEW_SQL = """
                         lower(regexp_replace(r.pattern, '\\s+', ' ', 'g'))
                       ) > 0
               ORDER BY r.position, r.id LIMIT 1) AS rule_category,
+             (SELECT r.merchant FROM merchant_rules r
+              WHERE r.enabled AND r.pattern <> ''
+                AND (r.source  IS NULL OR r.source  = t.source)
+                AND (r.account IS NULL OR r.account = COALESCE(ci.account, t.account))
+                AND instr(
+                        lower(regexp_replace(t.description, '\\s+', ' ', 'g')),
+                        lower(regexp_replace(r.pattern, '\\s+', ' ', 'g'))
+                      ) > 0
+              ORDER BY r.position, r.id LIMIT 1) AS rule_merchant,
              -- Date ignores (date_ignores table): true when any rule
              -- covers this txn_date. Pure read-time flag like
              -- rule_category — independent of the category chain, so
@@ -532,6 +557,7 @@ CREATE_EFFECTIVE_VIEW_SQL = """
       FROM transactions AS t
       LEFT JOIN csv_imports AS ci ON ci.id = t.import_id
       LEFT JOIN category_overrides AS o ON o.txn_id = t.id
+      LEFT JOIN merchant_overrides AS mo ON mo.txn_id = t.id
       WHERE t.id NOT IN (SELECT txn_id FROM deleted_transactions)
     ) AS x
 """
