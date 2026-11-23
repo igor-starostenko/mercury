@@ -252,27 +252,43 @@ def accounts(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
 
 
 def sankey_flow(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
-    """Gross movement per (account, category) for the Overview sankey.
+    """Per-(account, category) sign-split movement for the Overview
+    Sankey.
 
-    One row per (source, account, effective category) that has a
-    non-zero, non-ignored movement: ``amount`` = SUM(ABS(amount)), so
-    spend and income both surface as account → category bands (the
-    chart is one-directional by design — income lands in its category
-    the same way spend does). Ignored rows are excluded, like every
-    other aggregate. All time: the Overview page shows the whole
-    history, and the page has no period picker.
+    One row per (source, account, effective category) with any
+    non-zero, non-ignored movement, split by sign: ``debit`` is the
+    sum of ABS over negative (spend) rows, ``credit`` the sum over
+    positive (income) rows, and ``amount`` = debit + credit (kept for
+    backward compatibility with the pre-split shape). The chart is a
+    3-column flow — debit categories on the left, accounts in the
+    middle, credit categories on the right — so both signs must
+    survive to the client instead of being summed away. Ignored rows
+    are excluded, like every other aggregate. All-period: the
+    overview page shows full history and has no period picker.
     """
+    # DuckDB 2.0 rejects both FILTER attached to the inner scalar
+    # (SUM(ABS(amt) FILTER …) → "abs is a Scalar Function … FILTER …
+    # only applicable to window and aggregate functions") and a
+    # nested aggregate in ORDER BY — so the sign goes in a CASE
+    # inside the SUM (NULLs skipped) and the ordering happens on the
+    # outer wrapper over plain alias expressions.
     rows = con.execute(f"""
-        SELECT source, account,
-               COALESCE(category, 'Uncategorized') AS category,
-               SUM(ABS(amount)) AS flow
-        FROM effective_transactions
-        WHERE amount != 0 AND {NOT_IGNORED}
-        GROUP BY 1, 2, 3
-        ORDER BY 1, 2, 4 DESC
+        SELECT * FROM (
+            SELECT source, account,
+                   COALESCE(category, 'Uncategorized') AS category,
+                   COALESCE(SUM(ABS(CASE WHEN amount < 0 THEN amount END)), 0) AS debit,
+                   COALESCE(SUM(ABS(CASE WHEN amount > 0 THEN amount END)), 0) AS credit
+            FROM effective_transactions
+            WHERE amount != 0 AND {NOT_IGNORED}
+            GROUP BY 1, 2, 3
+        ) t
+        WHERE debit + credit > 0
+        ORDER BY source, account, debit + credit DESC
     """).fetchall()
-    return [{"source": s, "account": a, "category": c, "amount": round(f, 2)}
-            for s, a, c, f in rows]
+    return [{"source": s, "account": a, "category": c,
+             "debit": round(d, 2), "credit": round(cr, 2),
+             "amount": round(d + cr, 2)}
+            for s, a, c, d, cr in rows]
 
 
 def unknown_categories(con: duckdb.DuckDBPyConnection,
