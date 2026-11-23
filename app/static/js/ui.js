@@ -858,19 +858,35 @@ function makeFlowChart(canvas, cfg) {
   return chart;
 }
 
-/* Overview sankey: gross movement from each account to its effective
- * categories — account → category bands. Spend and income both flow
- * the same direction (the chart is one-way by design), so a card's
- * charges and its income both show; ignored rows never reach the
- * endpoint (server-side, like every aggregate).
+/* Overview sankey: 3-column flow — debit (spend) categories on the
+ * LEFT, accounts in the MIDDLE, credit (income) categories on the
+ * RIGHT: income comes in, passes through the accounts, and lands in
+ * spend categories. Edge orientation encodes the side: debit flows
+ * run category → account, credit flows run account → category.
+ * Ignored rows never reach the endpoint (server-side, like every
+ * aggregate).
  *
- * Node order: total flow, largest first (the layout keeps
- * first-appearance order, so the widest bands sit at the top).
+ * Column placement is graph topology in the plugin (longest path
+ * from a source), so the edges above put debit categories at depth
+ * 0, accounts at 1, credit categories at 2. Two options keep it
+ * honest: modeX:'node' stops the default 'edge' rule that would push
+ * a sink — an account with no credit outflow (Apple Card in the live
+ * data) — into the rightmost column; nodeAlign:'start' packs each
+ * column from the top instead of justifying it.
+ *
+ * Node order: per column, flow total desc (left debit categories by
+ * debit, middle accounts by total, right credit categories by
+ * credit) — the layout keeps first-appearance order, so the widest
+ * bands sit at the top.
  * Node colors follow the band ends — the plugin takes each node's
- * fill from the flow element's resolved colorFrom/colorTo: accounts
- * get a theme-neutral fill, categories their palette color, and the
- * band is a low-alpha gradient between the two.
- * flows: [{source, account, category, amount}] (amount > 0).
+ * fill from the flow element's resolved colorFrom/colorTo, so BOTH
+ * are scriptable here: a category endpoint (either side) carries its
+ * palette color, an account endpoint the theme-neutral fill.
+ * flows: [{from, to, flow}] (flow > 0) where from/to are node
+ * identities: plain category names or account keys
+ * (source + '\u0000' + account, never written into HTML — the
+ * U+0000 is also what separates the two node kinds here; see
+ * skPickers in index.html).
  * emptyMsg: text for the no-data hint (defaults to the generic
  * "no transactions yet" — the Overview passes a filter-specific one
  * when the pickers hid everything). */
@@ -888,46 +904,76 @@ function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet') {
     return null;
   }
 
-  // Two banks can share an account name ("Checking") — disambiguate
-  // only the duplicates, with the source prefixed.
-  const acctKey = f => f.source + '\u0000' + f.account;
-  const acctTotal = {}, catTotal = {};
+  // Account keys embed U+0000, category names never do — that is what
+  // separates the two node kinds. Two banks can share an account name
+  // ("Checking") — disambiguate only the duplicates, with the source
+  // prefixed (label logic unchanged from v1.6.0).
+  const isAcctKey = x => String(x).includes('\u0000');
+  const total = {}, catSide = {};
   for (const f of flows) {
-    acctTotal[acctKey(f)] = (acctTotal[acctKey(f)] || 0) + f.amount;
-    catTotal[f.category] = (catTotal[f.category] || 0) + f.amount;
+    for (const end of [f.from, f.to])
+      total[end] = (total[end] || 0) + f.flow;
+    const c = isAcctKey(f.from) ? f.to : f.from;
+    const t = catSide[c] || (catSide[c] = { debit: 0, credit: 0 });
+    if (isAcctKey(f.from)) t.credit += f.flow; else t.debit += f.flow;
   }
-  const names = Object.keys(acctTotal).map(k => k.split('\u0000').pop());
+  const acctKeys = Object.keys(total).filter(k => isAcctKey(k));
+  const names = acctKeys.map(k => k.split('\u0000').pop());
   const dupNames = new Set(names.filter((n, i) => names.indexOf(n) !== i));
   const acctLabel = k => {
     const [s, a] = k.split('\u0000');
     return dupNames.has(a) ? s + ' · ' + a : a;
   };
-
-  const accts = Object.keys(acctTotal)
-    .sort((a, b) => acctTotal[b] - acctTotal[a] || a.localeCompare(b));
-  const cats = Object.keys(catTotal)
-    .sort((a, b) => catTotal[b] - catTotal[a] || a.localeCompare(b));
-  const labels = accts.map(acctLabel).concat(cats);
+  // A category name active on BOTH sides collapses to one node (odd
+  // data, none today — don't special-case): its label is added once,
+  // at its first column.
+  const seen = new Set();
+  const labels = [
+    ...Object.keys(catSide)
+      .filter(c => catSide[c].debit > 0)
+      .sort((a, b) => catSide[b].debit - catSide[a].debit
+                     || a.localeCompare(b)),
+    ...acctKeys
+      .sort((a, b) => total[b] - total[a] || a.localeCompare(b))
+      .map(acctLabel),
+    ...Object.keys(catSide)
+      .filter(c => catSide[c].credit > 0)
+      .sort((a, b) => catSide[b].credit - catSide[a].credit
+                     || a.localeCompare(b)),
+  ].filter(l => (seen.has(l) ? false : (seen.add(l), true)));
   const nodeIndex = new Map(labels.map((l, i) => [l, i]));
-  // First-appearance order = account rank, then category rank.
+  const render = x => isAcctKey(x) ? acctLabel(x) : x;
+  const labelTotal = {};
+  for (const f of flows)
+    labelTotal[render(f.to)] = (labelTotal[render(f.to)] || 0) + f.flow;
+  // First-appearance order = column rank, then node rank within the
+  // column (the band sort keeps each node's ribbons contiguous).
   const data = flows.map(f => ({
-    from: acctLabel(acctKey(f)), to: f.category, flow: f.amount,
+    from: render(f.from), to: render(f.to), flow: f.flow,
   })).sort((a, b) =>
     nodeIndex.get(a.from) - nodeIndex.get(b.from) ||
-    (catTotal[b.to] || 0) - (catTotal[a.to] || 0));
+    (labelTotal[b.to] || 0) - (labelTotal[a.to] || 0));
 
   const css = getComputedStyle(document.documentElement);
   const acctColor = (css.getPropertyValue('--muted') || '').trim() || '#5a6772';
+  // Endpoint colors resolve on the RENDERED labels (data items carry
+  // those, not the raw keys) — the Set of rendered account labels is
+  // what tells the ends apart. A node's fill is last-edge-wins in the
+  // plugin, and every edge incident to a node resolves it to the same
+  // color, so nodes stay consistent.
+  const renderedAccts = new Set(acctKeys.map(acctLabel));
+  const nodeColor = x => renderedAccts.has(String(x)) ? acctColor
+                                                      : catColor(String(x));
 
   return new Chart(canvas, {
     type: 'sankey',
     data: {
       datasets: [{
         data,
-        colorFrom: () => acctColor,
         // Scriptable ctx: Chart.js passes the dataset context with
         // ctx.raw = the raw data item ({from, to, flow}).
-        colorTo: ctx => catColor(String((ctx && ctx.raw && ctx.raw.to) ?? '')),
+        colorFrom: ctx => nodeColor((ctx && ctx.raw && ctx.raw.from) ?? ''),
+        colorTo: ctx => nodeColor((ctx && ctx.raw && ctx.raw.to) ?? ''),
       }],
     },
     options: {
@@ -939,10 +985,20 @@ function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet') {
       // Labels: the plugin draws node keys beside the nodes; give them
       // the theme text color (default is black — unreadable on dark
       // schemes). Keep the default font (the chart font).
+      // Middle-column (account) labels land over ribbons — the bands
+      // are alpha 0.5, so the bold theme-colored text stays readable
+      // over them (verified by screenshot on the live data).
       nodeLabels: { display: true, color:
         (css.getPropertyValue('--text') || '').trim() || '#25343f' },
       nodeWidth: 12,
       nodePadding: 14,
+      // 3-column orientation: 'node' keeps a sink at its natural
+      // graph depth (an account with no credit outflow — Apple Card —
+      // stays in the MIDDLE; the default 'edge' mode would push it to
+      // the rightmost column), 'start' packs each column from the top
+      // instead of justifying it.
+      modeX: 'node',
+      nodeAlign: 'start',
       plugins: {
         legend: { display: false },
         tooltip: {
@@ -950,11 +1006,15 @@ function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet') {
           callbacks: {
             title: () => '',
             // Default shape: parsed._custom = {from:{key}, to:{key},
-            // flow} — format the flow as money.
+            // flow} (the keys carry the U+0000 account separator) —
+            // render labels (never raw keys) and format the flow as
+            // money.
             label(ctx) {
               const p = ctx.parsed, c = p._custom || {};
-              const from = (c.from && c.from.key) ?? p.from;
-              const to = (c.to && c.to.key) ?? p.to;
+              const name = (r, f) => typeof r === 'string' ? r
+                : String((f && f.key) ?? '').replace('\u0000', ' · ');
+              const from = name(c.from, p.from);
+              const to = name(c.to, p.to);
               const v = (c && typeof c.flow === 'number') ? c.flow : p.flow;
               return `${from} → ${to}: ${fmtMoney(v)}`;
             },

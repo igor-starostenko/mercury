@@ -61,7 +61,7 @@
 
   <section class="section">
     <div class="section-head">
-      <h2>Account → category flow</h2>
+      <h2>Account flow</h2>
       <div class="catpick" id="skAcctPick">
         <button type="button" class="catpick-btn" id="skAcctPickBtn"
                 aria-haspopup="true" aria-expanded="false">
@@ -78,9 +78,9 @@
         </button>
         <div class="catpick-menu" id="skCatPickMenu" role="listbox"
              aria-multiselectable="true"
-             aria-label="Categories in the flow chart"></div>
+             aria-label="Spend categories in the flow chart"></div>
       </div>
-      <span class="hint">all time · where each account's money landed · ignored rows excluded</span>
+      <span class="hint">all time · income in, spend out · ignored rows excluded</span>
     </div>
     <div class="panel"><div class="chart-wrap sankey"><canvas id="sankeyChart"></canvas></div></div>
   </section>
@@ -94,19 +94,26 @@ window.onDataChanged = renderAll;
 let _flowCfg = null; // last chart config, so the view toggle re-draws
                      // without refetching
 
-/* ------------------------------ account→category flow (sankey) */
-/* The sankey is filtered by two multiselect pickers — the
- * Categories-page catpick pattern: the accounts menu lists every
+/* ------------------------------ account flow (sankey) */
+/* The sankey is a 3-column flow — debit (spend) categories on the
+ * LEFT, accounts in the MIDDLE, credit (income) categories on the
+ * RIGHT — and is filtered by two multiselect pickers (the
+ * Categories-page catpick pattern): the accounts menu lists every
  * payload account (default: ALL of them), the categories menu lists
- * EVERY payload category (first-visit default: the top 8 by spend),
- * and every category not individually selected aggregates into one
- * "All other" node (on by default, checkable). The selection persists
- * in localStorage
+ * every DEBIT category (first-visit default: the top 8 by DEBIT
+ * spend), and every debit category not individually selected
+ * aggregates into one "All other" node (on by default, checkable).
+ * The picker controls the debit side only — the credit side always
+ * renders in full: there are 1–2 income categories and hiding income
+ * would be nonsense, so none of them are listed. A v1.6.0 saved
+ * selection may name credit categories (its top-8-by-gross default) —
+ * normalization drops them silently; they render regardless. The
+ * selection persists in localStorage
  * (mercury.sankeySel: {accounts, categories, allOther} — a missing
  * allOther key reads as true, so v1.4.0 state migrates cleanly) and
  * the filtering is CLIENT-SIDE over the cached /api/sankey payload —
  * toggling a box redraws instantly with no refetch, and the API keeps
- * returning the full honest all-time payload.
+ * returning the full honest all-time payload (sign-split per row).
  */
 const SK_LS = 'mercury.sankeySel';
 const SK_ALL_OTHER = 'All other'; // node + menu entry for the catch-all
@@ -151,21 +158,28 @@ function skAcctOptions() {
       ? f.source + ' · ' + f.account : f.account]);
 }
 
-/* Category menu: EVERY payload category as an individual option —
- * per-category flow totals from the payload, spend-desc with name
- * asc on ties (so the head of the list IS the top-N-by-spend the
- * first-visit default checks; computed from the chart's own data so
- * the menu list and the "All other" bucket always agree on which
- * categories exist). The "All other" catch-all still aggregates the
- * categories that aren't individually selected — but every one of
- * them is a menu entry, not just the top 8. */
-const SK_DEFAULT_CATS = 8; // first-visit default: top 8 by spend
+/* Category menu: the DEBIT (spend) categories as individual options
+ * — per-category DEBIT totals from the payload, debit-spend-desc
+ * with name asc on ties (so the head of the list IS the top-N-by-
+ * debit the first-visit default checks; computed from the chart's
+ * own data so the menu and the "All other" bucket always agree on
+ * which debit categories exist). The picker controls the LEFT side
+ * of the 3-column flow only: credit-only categories (Income,
+ * Investing in the live data) never appear — they render in full on
+ * the right regardless of the selection (hiding income would be
+ * nonsense; there are 1–2 of them). The "All other" catch-all still
+ * aggregates the debit categories that aren't individually
+ * selected. A v1.6.0 saved selection may name credit categories
+ * (its top-8-by-gross default) — skPickers' normalization drops
+ * them; they render regardless. */
+const SK_DEFAULT_CATS = 8; // first-visit default: top 8 by DEBIT spend
 function skCatList() {
-  const total = {};
+  const debit = {};
   for (const f of _skFlows || [])
-    total[f.category] = (total[f.category] || 0) + f.amount;
-  return Object.keys(total)
-    .sort((a, b) => total[b] - total[a] || a.localeCompare(b));
+    debit[f.category] = (debit[f.category] || 0) + (f.debit || 0);
+  return Object.keys(debit)
+    .filter(c => debit[c] > 0)
+    .sort((a, b) => debit[b] - debit[a] || a.localeCompare(b));
 }
 
 /* Rebuild both menus from the cached payload + current selection
@@ -191,9 +205,13 @@ function skPickers() {
     // A saved selection is respected as-is (a saved [] stays []),
     // normalized to names that still exist in the menu; first visit →
     // the first-paint default: accounts = the WHOLE menu, categories
-    // = only the top 8 by spend — the menu now lists every category,
-    // so defaulting to the whole menu would check all 15 and (with
-    // allOther on) leave the "All other" bucket empty.
+    // = only the top 8 by DEBIT spend — the menu lists every DEBIT
+    // category, so defaulting to the whole menu would check all of
+    // them and (with allOther on) leave the "All other" bucket empty.
+    // Normalization against the debit-only menu is also what migrates
+    // v1.6.0 state: a saved top-8-by-gross selection may name credit
+    // categories (Income/Investing) — they drop out here silently and
+    // still render on the right, since the credit side is always full.
     sel[which] = saved && Array.isArray(saved[which])
       ? [...new Set(saved[which].filter(
           x => typeof x === 'string' && opts[which].includes(x)))]
@@ -315,41 +333,56 @@ function wireSkPickers() {
 }
 
 /* The chart over the cached payload, restricted to the pickers'
- * selections. Individually selected categories keep their own nodes;
- * with the "All other" catch-all on, every remaining payload category
+ * selections. The picker controls the DEBIT (spend) side only:
+ * individually selected debit categories keep their own nodes, and
+ * with the "All other" catch-all on, every remaining DEBIT category
  * aggregates into a single "All other" node — one flow per account
- * (that account's summed flows into the bucket) — so toggling an
- * individual box moves it between its node and the bucket. The bucket
- * is always "payload − individually selected". */
+ * (that account's summed debit into the bucket) — so toggling an
+ * individual box moves its SPEND between the node and the bucket.
+ * The bucket is always "debit payload − individually selected".
+ * The CREDIT (income) side always renders in full — no filtering,
+ * no bucket — so a category with both signs splits into one edge
+ * per side. Edges are oriented for the 3-column layout: debit
+ * flows run category → account (left → middle), credit flows run
+ * account → category (middle → right). */
 function renderSankeyChart() {
   const saved = skSaved() || {};
   const a = new Set(Array.isArray(saved.accounts) ? saved.accounts : []);
   const indiv = new Set(Array.isArray(saved.categories)
     ? saved.categories : []);
   const allOther = skAllOther(saved);
-  const flows = (_skFlows || []).filter(
-    f => a.has(skAcctKey(f)) && indiv.has(f.category));
-  if (allOther) {
-    const bucket = new Map();
-    for (const f of _skFlows || []) {
-      if (!a.has(skAcctKey(f)) || indiv.has(f.category)) continue;
-      const k = skAcctKey(f);
-      const b = bucket.get(k) || { source: f.source, account: f.account,
-                                    amount: 0 };
-      b.amount += f.amount;
-      bucket.set(k, b);
+  const flows = [];
+  const bucket = new Map();
+  for (const f of _skFlows || []) {
+    const k = skAcctKey(f);
+    if (!a.has(k)) continue;
+    const d = f.debit || 0, c = f.credit || 0;
+    if (d > 0) {
+      if (indiv.has(f.category))
+        flows.push({ from: f.category, to: k, flow: d });
+      else if (allOther) {
+        const b = bucket.get(k) || { source: f.source, account: f.account,
+                                      amount: 0 };
+        b.amount += d;
+        bucket.set(k, b);
+      }
+      // unchecked with the catch-all off: hidden (the picker's
+      // explicit intent — same as a spend category today)
     }
-    for (const b of bucket.values())
-      flows.push({ source: b.source, account: b.account,
-                   category: SK_ALL_OTHER, amount: b.amount });
+    if (c > 0)
+      flows.push({ from: k, to: f.category, flow: c });
   }
-  // Distinguish "nothing in the data" from "the filters hid it": an
-  // empty selection (no accounts, or the catch-all off with no
-  // categories) always yields zero flows here.
+  if (allOther)
+    for (const b of bucket.values())
+      flows.push({ from: SK_ALL_OTHER, to: skAcctKey(b), flow: b.amount });
+  // Distinguish "nothing in the data" from "the filters hid it":
+  // credit always renders, so zero flows means no accounts selected,
+  // or every spend category unchecked with the catch-all off on
+  // accounts that have no credit either.
   makeSankeyChart($id('sankeyChart'), flows,
-    (_skFlows || []).length && !flows.length
-      ? 'pick at least one account and one category'
-      : 'no transactions yet');
+    !(_skFlows || []).length ? 'no transactions yet'
+      : !a.size ? 'pick at least one account'
+      : 'pick at least one spend category or "All other"');
 }
 
 async function renderAll() {

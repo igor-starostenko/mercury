@@ -1,10 +1,12 @@
 """Overview sankey data layer: /api/sankey.
 
-Per (source, account, effective category) gross movement —
-SUM(ABS(amount)) — for the account → category sankey chart. Spend
-and income both surface (the chart is one-directional); ignored rows
-(rule or date level), soft-deleted rows and zero-amount rows are
-excluded, like every other aggregate.
+Per (source, account, effective category) movement split by sign —
+``debit`` = SUM(ABS(amount)) over negative (spend) rows, ``credit``
+over positive (income) rows, ``amount`` = debit + credit (kept for
+backward compatibility) — for the 3-column sankey chart: debit
+categories left, accounts middle, credit categories right. Ignored
+rows (rule or date level), soft-deleted rows and zero-amount rows
+are excluded, like every other aggregate.
 """
 
 import duckdb
@@ -67,15 +69,25 @@ def _seed(con):
 def test_flows_grouped_by_account_and_category(tmp_path):
     con = _conn(tmp_path)
     _seed(con)
-    out = {((r["source"], r["account"], r["category"])): r["amount"]
+    out = {((r["source"], r["account"], r["category"])): r
            for r in analytics.sankey_flow(con)}
-    assert out[("Wells Fargo", "Checking", "Groceries")] == 65.0
-    assert out[("Wells Fargo", "Checking", "Dining")] == 20.0
-    assert out[("Chase", "Checking", "Shopping")] == 30.0
-    # income is a band like spend (one-directional chart)
-    assert out[("Chase", "Checking", "Income")] == 100.0
-    # mixed signs sum by ABS
-    assert out[("Apple Card", "Apple Card", "Subscriptions")] == 105.0
+    # amount == debit + credit on every row (the compat gross total)
+    for r in out.values():
+        assert abs(r["amount"] - (r["debit"] + r["credit"])) < 1e-9
+        assert r["debit"] >= 0 and r["credit"] >= 0
+    assert out[("Wells Fargo", "Checking", "Groceries")]["amount"] == 65.0
+    assert out[("Wells Fargo", "Checking", "Dining")]["amount"] == 20.0
+    assert out[("Chase", "Checking", "Shopping")]["amount"] == 30.0
+    # income is a band like spend (3-column chart: right side)
+    inc = out[("Chase", "Checking", "Income")]
+    assert inc["amount"] == 100.0
+    assert inc["debit"] == 0.0 and inc["credit"] == 100.0
+    # mixed signs split by sign: spend left, refund right
+    sub = out[("Apple Card", "Apple Card", "Subscriptions")]
+    assert sub["amount"] == 105.0
+    assert sub["debit"] == 80.0 and sub["credit"] == 25.0
+    assert out[("Wells Fargo", "Checking", "Groceries")]["debit"] == 65.0
+    assert out[("Wells Fargo", "Checking", "Groceries")]["credit"] == 0.0
     # no null-category leak
     assert not any(c is None or c == "" for *_, c in out)
     con.close()
