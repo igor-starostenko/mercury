@@ -858,25 +858,30 @@ function makeFlowChart(canvas, cfg) {
   return chart;
 }
 
-/* Overview sankey: 3-column flow — debit (spend) categories on the
- * LEFT, accounts in the MIDDLE, credit (income) categories on the
- * RIGHT: income comes in, passes through the accounts, and lands in
- * spend categories. Edge orientation encodes the side: debit flows
- * run category → account, credit flows run account → category.
- * Ignored rows never reach the endpoint (server-side, like every
- * aggregate).
+/* Overview sankey: 3-column flow — NET-POSITIVE (income) categories
+ * on the LEFT, accounts in the MIDDLE, NET-NEGATIVE (spend)
+ * categories on the RIGHT: income flows in, passes through the
+ * accounts, and lands in spend categories. Edge orientation encodes
+ * the side: credit flows run category → account, debit flows run
+ * account → category. Classification happens upstream (index.html
+ * renderSankeyChart): a category is net positive → left (credit
+ * flows only), net negative → right (debit flows only), net zero →
+ * not shown at all. Ignored rows never reach the endpoint (server-side,
+ * like every aggregate).
  *
- * Column placement is graph topology in the plugin (longest path
- * from a source), so the edges above put debit categories at depth
- * 0, accounts at 1, credit categories at 2. Two options keep it
- * honest: modeX:'node' stops the default 'edge' rule that would push
- * a sink — an account with no credit outflow (Apple Card in the live
- * data) — into the rightmost column; nodeAlign:'start' packs each
- * column from the top instead of justifying it.
+ * Column placement is PINNED explicitly (options.column): the plugin
+ * reads it per node and skips graph-depth assignment for pinned
+ * nodes. This is deliberate — in the flipped graph an account with
+ * no credit inflow (Apple Card in the live data) is a pure source,
+ * and graph topology would dump it in the LEFT column with the
+ * income categories. Pinning guarantees the 3-column structure
+ * regardless of topology: credit = 0, accounts = 1, debit = 2.
+ * nodeAlign:'start' packs each column from the top instead of
+ * justifying it.
  *
- * Node order: per column, flow total desc (left debit categories by
- * debit, middle accounts by total, right credit categories by
- * credit) — the layout keeps first-appearance order, so the widest
+ * Node order: per column, flow total desc (left credit categories by
+ * credit, middle accounts by total, right debit categories by
+ * debit) — the layout keeps first-appearance order, so the widest
  * bands sit at the top.
  * Node colors follow the band ends — the plugin takes each node's
  * fill from the flow element's resolved colorFrom/colorTo, so BOTH
@@ -915,7 +920,9 @@ function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet') {
       total[end] = (total[end] || 0) + f.flow;
     const c = isAcctKey(f.from) ? f.to : f.from;
     const t = catSide[c] || (catSide[c] = { debit: 0, credit: 0 });
-    if (isAcctKey(f.from)) t.credit += f.flow; else t.debit += f.flow;
+    // Flipped orientation: account → category is a debit (spend)
+    // flow; category → account is a credit (income) flow.
+    if (isAcctKey(f.from)) t.debit += f.flow; else t.credit += f.flow;
   }
   const acctKeys = Object.keys(total).filter(k => isAcctKey(k));
   const names = acctKeys.map(k => k.split('\u0000').pop());
@@ -924,23 +931,34 @@ function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet') {
     const [s, a] = k.split('\u0000');
     return dupNames.has(a) ? s + ' · ' + a : a;
   };
-  // A category name active on BOTH sides collapses to one node (odd
-  // data, none today — don't special-case): its label is added once,
-  // at its first column.
-  const seen = new Set();
-  const labels = [
-    ...Object.keys(catSide)
-      .filter(c => catSide[c].debit > 0)
-      .sort((a, b) => catSide[b].debit - catSide[a].debit
-                     || a.localeCompare(b)),
+  // Column order: credit (left), accounts (middle), debit (right) —
+  // per column, flow total desc (credit by credit, accounts by
+  // total, debit by debit). A category name active on BOTH sides
+  // collapses to one node (odd data, none today — don't special-
+  // case): it lands in the column of its first occurrence (credit
+  // first), and its pin matches that placement.
+  const creditCats = Object.keys(catSide)
+    .filter(c => catSide[c].credit > 0)
+    .sort((a, b) => catSide[b].credit - catSide[a].credit || a.localeCompare(b));
+  const debitCats = Object.keys(catSide)
+    .filter(c => catSide[c].debit > 0)
+    .sort((a, b) => catSide[b].debit - catSide[a].debit || a.localeCompare(b));
+  const colItems = [
+    ...creditCats.map(c => [c, 0]),
     ...acctKeys
       .sort((a, b) => total[b] - total[a] || a.localeCompare(b))
-      .map(acctLabel),
-    ...Object.keys(catSide)
-      .filter(c => catSide[c].credit > 0)
-      .sort((a, b) => catSide[b].credit - catSide[a].credit
-                     || a.localeCompare(b)),
-  ].filter(l => (seen.has(l) ? false : (seen.add(l), true)));
+      .map(k => [acctLabel(k), 1]),
+    ...debitCats.map(c => [c, 2]),
+  ];
+  const seen = new Set();
+  const labels = [];
+  const column = {};
+  for (const [l, col] of colItems) {
+    if (seen.has(l)) continue;
+    seen.add(l);
+    labels.push(l);
+    column[l] = col;
+  }
   const nodeIndex = new Map(labels.map((l, i) => [l, i]));
   const render = x => isAcctKey(x) ? acctLabel(x) : x;
   const labelTotal = {};
@@ -992,13 +1010,16 @@ function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet') {
         (css.getPropertyValue('--text') || '').trim() || '#25343f' },
       nodeWidth: 12,
       nodePadding: 14,
-      // 3-column orientation: 'node' keeps a sink at its natural
-      // graph depth (an account with no credit outflow — Apple Card —
-      // stays in the MIDDLE; the default 'edge' mode would push it to
-      // the rightmost column), 'start' packs each column from the top
-      // instead of justifying it.
+      // Columns are pinned explicitly via `column` (built above):
+      // the plugin takes each pinned node's x from the map and skips
+      // graph-depth assignment — topology can't shove an account
+      // into the wrong column. modeX:'node' keeps any unpinned node
+      // at its natural graph depth (the default 'edge' mode would
+      // push every sink to the rightmost column), and nodeAlign:
+      // 'start' packs each column from the top instead of justifying.
       modeX: 'node',
       nodeAlign: 'start',
+      column,
       plugins: {
         legend: { display: false },
         tooltip: {

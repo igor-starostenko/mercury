@@ -3,8 +3,8 @@
 Per (source, account, effective category) movement split by sign —
 ``debit`` = SUM(ABS(amount)) over negative (spend) rows, ``credit``
 over positive (income) rows, ``amount`` = debit + credit (kept for
-backward compatibility) — for the 3-column sankey chart: debit
-categories left, accounts middle, credit categories right. Ignored
+backward compatibility) — for the 3-column sankey chart: credit
+categories left, accounts middle, debit categories right. Ignored
 rows (rule or date level), soft-deleted rows and zero-amount rows
 are excluded, like every other aggregate.
 """

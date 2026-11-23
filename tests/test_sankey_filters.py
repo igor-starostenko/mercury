@@ -1,22 +1,27 @@
 """Server-side invariants for the Overview Sankey 3-column flow.
 
-v1.7.0 re-orients the chart: debit (spend) categories on the LEFT,
-accounts in the middle, credit (income) categories on the RIGHT. The
-category picker controls the DEBIT side only — it lists every
-DEBIT category as an individual option plus one "All other" entry
-(first-visit default = top 8 by DEBIT spend): the client folds every
-remaining DEBIT category into a single "All other" node, computed
-purely from the /api/sankey payload (bucket = debit payload −
-individual selection, one aggregated debit flow per account). The
-CREDIT side always renders in full — no filtering, no bucket.
+v1.8.0 re-orients the chart: NET-POSITIVE (income) categories on
+the LEFT, accounts in the middle, NET-NEGATIVE (spend) categories on
+the RIGHT. The category picker controls the RIGHT side only — it
+lists every NET-NEGATIVE category as an individual option plus one
+"All other" entry (first-visit default = top 8 by DEBIT spend): the
+client folds every remaining NET-NEGATIVE category into a single
+"All other" node, computed purely from the /api/sankey payload
+(bucket = debit payload − individual selection, one aggregated debit
+flow per account). Each category is classified by its NET position
+(credit − debit) across the whole payload: net positive → left
+(credit flows only), net negative → right (debit flows only), net
+zero → not shown at all. The left side always renders in full — no
+filtering, no bucket.
 
 These tests pin what that client math depends on: the sign split is
 exactly right against direct SQL (the feature), amount == debit +
 credit on every row, "Ignored" never reaches the payload, the menu
-is exactly the DEBIT category set (credit-only categories never
-appear in it), the reserved "All other" name never collides with a
-real category, and the per-account debit aggregation the client does
-sums exactly to the raw flows — nothing lost, nothing double-counted.
+is exactly the NET-NEGATIVE category set (net-positive categories
+never appear in it), the reserved "All other" name never collides
+with a real category, and the per-account debit aggregation the
+client does sums exactly to the raw flows — nothing lost, nothing
+double-counted.
 """
 
 import duckdb
@@ -87,20 +92,31 @@ def _rows(tmp_path):
     return out
 
 
+def _nets(rows):
+    """Net position per category (credit − debit) across the whole
+    payload — the client's left/right classification input."""
+    net = {}
+    for r in rows:
+        net[r["category"]] = (net.get(r["category"], 0)
+                              + r["credit"] - r["debit"])
+    return net
+
+
 def _debit_totals(rows):
-    """The client's skCatList ranking input (v1.7.0): per-category
-    DEBIT totals — categories with debit > 0 only (the menu is the
-    spend side of the flow; credit-only categories render regardless
-    and are never options)."""
+    """The client's skCatList ranking input: per-category DEBIT
+    totals — NET-NEGATIVE categories only (the menu is the spend side
+    of the flow; net-positive categories render regardless and are
+    never options; a mixed category nets to its net position)."""
+    net = _nets(rows)
     total = {}
     for r in rows:
         if r["debit"] > 0:
             total[r["category"]] = total.get(r["category"], 0) + r["debit"]
-    return total
+    return {c: v for c, v in total.items() if net.get(c, 0) < 0}
 
 
 def _cat_menu(rows):
-    """The client's category menu (v1.7.0): EVERY DEBIT category,
+    """The client's category menu: EVERY NET-NEGATIVE category,
     debit-desc with name asc on ties — its head is the first-visit
     default (top-N-by-debit)."""
     total = _debit_totals(rows)
@@ -176,9 +192,10 @@ def test_bucket_is_debit_categories_minus_selection(tmp_path):
     bucket) must sum exactly to the raw debit flows of the
     non-selected categories — bucket + selected == whole debit
     payload, nothing lost or doubled. Credit flows never enter the
-    bucket (the right side always renders in full)."""
+    bucket (the left side always renders in full)."""
     rows = _rows(tmp_path)
-    debit_cats = {r["category"] for r in rows if r["debit"] > 0}
+    net = _nets(rows)
+    debit_cats = {c for c, n in net.items() if n < 0}
     total = _debit_totals(rows)
     selection = set(_top8(rows))
     assert selection < debit_cats  # a debit category sits outside top 8
@@ -210,11 +227,13 @@ def test_unchecking_a_category_grows_the_bucket(tmp_path):
     rows = _rows(tmp_path)
     total = _debit_totals(rows)
     top = _top8(rows)
+    net = _nets(rows)
 
     def bucket(sel):
         """Sum of debit flows the catch-all would aggregate for a
         selection."""
-        return sum(r["debit"] for r in rows if r["debit"] > 0
+        return sum(r["debit"] for r in rows
+                   if net.get(r["category"], 0) < 0
                    and r["category"] not in sel)
 
     full = bucket(set(top))
@@ -224,28 +243,36 @@ def test_unchecking_a_category_grows_the_bucket(tmp_path):
 
 
 def test_credit_side_ignores_the_selection(tmp_path):
-    """v1.7.0: the credit (income) side always renders in full — no
-    filtering, no bucket. Credit flows appear even when their
-    category is not a menu option (it isn't — credit-only categories
-    never enter the debit menu) and even when every debit category
-    is unchecked."""
+    """v1.8.0: NET-POSITIVE (income) categories always render in full
+    — no filtering, no bucket. They are never menu options (the
+    menu is the net-negative spend side), and their credit flows
+    appear even when every spend category is unchecked. A
+    NET-NEGATIVE category renders only its debit flows — its credit
+    flow is not rendered (the chart is a left-to-right flow)."""
     rows = _rows(tmp_path)
     credit_rows = [r for r in rows if r["credit"] > 0]
     assert credit_rows  # the fixture has income
-    # Credit-ONLY categories are never menu options (the menu is the
-    # debit side) — their flows render on the right regardless.
-    credit_only = {r["category"] for r in rows
-                   if r["credit"] > 0 and r["debit"] == 0}
-    assert credit_only  # Income in the fixture
+    net = _nets(rows)
+    net_positive = {c for c, n in net.items() if n > 0}
+    net_negative = {c for c, n in net.items() if n < 0}
+    assert net_positive  # Income in the fixture
     menu = _debit_totals(rows)
-    for c in credit_only:
+    for c in net_positive:
         assert c not in menu
-    # Unselecting every debit category hides nothing on the right.
-    selection = set()
+    for c in net_negative:
+        assert c in menu
+    # Unselecting every spend category hides nothing on the left.
     rendered_credit = sum(r["credit"] for r in rows
-                          if r["credit"] > 0
-                          and r["category"] not in selection)
-    assert rendered_credit == sum(r["credit"] for r in rows)
+                          if r["credit"] > 0 and net[r["category"]] > 0)
+    assert rendered_credit == sum(r["credit"] for r in rows
+                                  if net[r["category"]] > 0)
+    # The mixed category (net-negative) renders only its debit flow —
+    # its credit flow is not rendered.
+    mixed = {r["category"] for r in rows if r["credit"] > 0 and r["debit"] > 0}
+    for c in mixed:
+        assert net[c] < 0  # a mixed category that nets negative
+        assert c in menu  # ...still appears in the menu
+        assert sum(r["debit"] for r in rows if r["category"] == c) > 0
 
 
 def test_all_other_off_selects_nothing_outside_the_selection(tmp_path):
@@ -255,11 +282,12 @@ def test_all_other_off_selects_nothing_outside_the_selection(tmp_path):
     (Credit flows ride through either way — see
     test_credit_side_ignores_the_selection.)"""
     rows = _rows(tmp_path)
+    net = _nets(rows)
     selection = set(_top8(rows))
-    outside = [r for r in rows if r["debit"] > 0
+    outside = [r for r in rows if net.get(r["category"], 0) < 0
                and r["category"] not in selection]
     assert outside  # there IS debit data outside the selection
-    inside = [r for r in rows if r["debit"] > 0
+    inside = [r for r in rows if net.get(r["category"], 0) < 0
               and r["category"] in selection]
     assert {r["category"] for r in inside} <= selection
     # On: bucket == outside debit data, disjoint from the selected.
@@ -269,19 +297,21 @@ def test_all_other_off_selects_nothing_outside_the_selection(tmp_path):
 
 
 def test_menu_is_exactly_the_debit_category_set(tmp_path):
-    """v1.7.0: the menu lists EVERY DEBIT category — nothing hidden
-    from the picker, nothing invented, and CREDIT-only categories
-    (Income in the fixture) never appear (they render on the right
-    regardless of the selection). The menu set must equal the debit
-    category set exactly, per-category DEBIT totals must be
-    computable as the debit-desc ranking input, and the first-visit
-    default (top 8 by debit) must be the head of that same ranking."""
+    """v1.8.0: the menu lists EVERY NET-NEGATIVE category — nothing
+    hidden from the picker, nothing invented, and NET-POSITIVE
+    categories (Income in the fixture) never appear (they render on
+    the left regardless of the selection). The menu set must equal
+    the net-negative category set exactly, per-category DEBIT totals
+    must be computable as the debit-desc ranking input, and the
+    first-visit default (top 8 by debit) must be the head of that
+    same ranking."""
     rows = _rows(tmp_path)
-    debit_cats = {r["category"] for r in rows if r["debit"] > 0}
+    net = _nets(rows)
+    debit_cats = {c for c, n in net.items() if n < 0}
     menu = _cat_menu(rows)
     assert set(menu) == debit_cats
     assert len(menu) == len(debit_cats)
-    assert "Income" not in menu  # credit-only: right side, never a box
+    assert "Income" not in menu  # credit-only: left side, never a box
     # debit-desc, name asc on ties — strict ordering, no ties broken
     # arbitrarily (the CDP check compares the menu DOM order against
     # this ranking).

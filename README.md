@@ -28,8 +28,9 @@ The bottom line: statements in, honest charts out, nothing leaving the
 house.
 
 This is the Overview page: cash flow by month, year cards, your
-accounts, spend by category, and the account → category flow map —
-where each account's money actually landed, all in one view.
+accounts, spend by category, and the income → accounts → spend flow
+map — income in on the left, accounts in the middle, where each
+account's money landed on the right, all in one view.
 
 ![Mercury Overview page](docs/screenshots/overview.png)
 
@@ -114,7 +115,7 @@ Transactions page, where you can fix it in one click.
 
 | Page | What you see |
 | --- | --- |
-| **Overview** | Cash flow by month (all time) — stacked by category or as spend-vs-income totals, with trailing 12-month average lines. Year cards, an accounts table, and spend by category. An **account → category flow** sankey maps where each account's money landed (spend and income both show; ignored rows excluded). Click a bar, a year, or a category row to zoom in. The rule and ignore panels live on the Categories page. |
+| **Overview** | Cash flow by month (all time) — stacked by category or as spend-vs-income totals, with trailing 12-month average lines. Year cards, an accounts table, and spend by category. An **income → accounts → spend** sankey maps where each account's money came from and landed (income on the left, accounts in the middle, spend on the right; ignored rows excluded). Click a bar, a year, or a category row to zoom in. The rule and ignore panels live on the Categories page. |
 | **Categories** | The monthly spend trend for any category (one or several at once) against its 12-month average — the fastest way to spot "we're spending more on X". |
 | **Transactions** | Everything Mercury itself categorized (you / AI / rule) plus what's still unknown — with search, a "Set by" filter, inline category editing, and the optional Classify (LLM) button. |
 | **Year** | One year in detail: monthly cash flow and spend by category. |

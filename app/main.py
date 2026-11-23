@@ -248,9 +248,15 @@ def accounts():
 
 @app.get("/api/sankey")
 def sankey():
-    """Account → category gross flows for the Overview sankey chart:
-    per (source, account, effective category), SUM(ABS(amount)) over
-    non-ignored, non-zero rows — all time."""
+    """3-column sankey flows for the Overview sankey chart — credit
+    (income) categories left, accounts middle, debit (spend)
+    categories right: credit flows category → account, debit flows
+    account → category (the "All other" bucket aggregates the
+    unselected debit categories account → bucket). Per
+    (source, account, effective category) movement split by sign —
+    debit = SUM(ABS(amount)) over negative (spend) rows, credit over
+    positive (income) rows, amount = debit + credit (kept for
+    backward compatibility) — non-ignored, non-zero rows, all time."""
     con = get_con()
     try:
         return analytics.sankey_flow(con)
