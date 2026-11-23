@@ -265,6 +265,9 @@ main { padding: 22px 24px 48px; max-width: 1240px; margin: 0 auto; }
    doesn't cover this, so scope the gap to .section children. */
 .section > .panel + .panel { margin-top: 14px; }
 .panel canvas { max-height: 340px; }
+/* The overview sankey sizes itself to the tallest column (see ui.js) —
+   it must not be capped at the generic 340px panel-canvas ceiling. */
+.panel canvas#sankeyChart { max-height: none; }
 
 .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .toolbar label { color: var(--muted); font-size: 13px; }
@@ -338,10 +341,10 @@ th.sortable .sort-ind { margin-left: 4px; font-size: 8px; letter-spacing: 0; }
 }
 @keyframes skel-pulse { 50% { opacity: .45; } }
 .chart-wrap { position: relative; height: 320px; }
-/* Overview sankey: one node row per account and per category — the
-   fixed height must fit ~24 labels (nodePadding 14 + line-height per
-   row) or the plugin squeezes the bands. */
-.chart-wrap.sankey { height: 640px; }
+/* Overview sankey: one node row per account and per category. The
+   wrap height is set inline by makeSankeyChart from the tallest column
+   (see ui.js) — the fixed fallback here only covers first paint. */
+.chart-wrap.sankey { height: 480px; }
 /* Muted empty-state inside the fixed-height chart wrap (the panel is
    never hidden — stable space while loading / on an empty search). */
 .chart-empty { position: absolute; inset: 0; display: flex; align-items: center;
@@ -562,5 +565,5 @@ mark {
   main { padding: 16px 14px 40px; }
   .desc { max-width: 220px; }
   .chart-wrap { height: 240px; }
-  .chart-wrap.sankey { height: 520px; }
+  .chart-wrap.sankey { height: 440px; }
 }
