@@ -699,6 +699,11 @@ def categories_page():
     return FileResponse(STATIC_DIR / "categories.html")
 
 
+@app.get("/merchants")
+def merchants_page():
+    return FileResponse(STATIC_DIR / "merchants.html")
+
+
 @app.get("/transactions")
 def transactions_page():
     return FileResponse(STATIC_DIR / "transactions.html")
