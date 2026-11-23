@@ -115,8 +115,9 @@ Transactions page, where you can fix it in one click.
 
 | Page | What you see |
 | --- | --- |
-| **Overview** | Cash flow by month (all time) — stacked by category or as spend-vs-income totals, with trailing 12-month average lines. Year cards, an accounts table, and spend by category. An **income → accounts → spend** sankey maps where each account's money came from and landed (income on the left, accounts in the middle, spend on the right; ignored rows excluded). Click a bar, a year, or a category row to zoom in. The rule and ignore panels live on the Categories page. |
+| **Overview** | Cash flow by month (all time) — stacked by category or as spend-vs-income totals, with trailing 12-month average lines. Year cards, an accounts table, and spend by category. An **income → accounts → spend → merchants** sankey maps where each account's money came from and landed (income on the left, accounts in the middle-left, spend on the right-left, merchants on the right; ignored rows excluded). Each spend category fans out to its effective merchants — the merchant layer (you > rule > LLM) is the last column. Click a bar, a year, or a category row to zoom in. The rule and ignore panels live on the Categories page. |
 | **Categories** | The monthly spend trend for any category (one or several at once) against its 12-month average — the fastest way to spot "we're spending more on X". |
+| **Merchants** | The merchant layer: where each transaction's merchant came from (you > rule > LLM) — search, sort, filter by who set it, and the Match merchants panel to add/edit merchant rules (rule > LLM > imported default) or run the LLM classifier. A Money Flow Sankey sits at the top. |
 | **Transactions** | Everything Mercury itself categorized (you / AI / rule) plus what's still unknown — with search, a "Set by" filter, inline category editing, and the optional Classify (LLM) button. |
 | **Year** | One year in detail: monthly cash flow and spend by category. |
 | **Month** | One month in detail: weekly cash flow, spend by category, and the full transaction list for that month (searchable, sortable by date, description, or amount). |
