@@ -260,8 +260,8 @@ def sankey_flow(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
     sum of ABS over negative (spend) rows, ``credit`` the sum over
     positive (income) rows, and ``amount`` = debit + credit (kept for
     backward compatibility with the pre-split shape). The chart is a
-    3-column flow — debit categories on the left, accounts in the
-    middle, credit categories on the right — so both signs must
+    3-column flow — credit categories on the left, accounts in the
+    middle, debit categories on the right — so both signs must
     survive to the client instead of being summed away. Ignored rows
     are excluded, like every other aggregate. All-period: the
     overview page shows full history and has no period picker.
