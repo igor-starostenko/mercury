@@ -911,15 +911,22 @@ function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet') {
     return null;
   }
 
-  // Account keys embed U+0000, category names never do — that is what
-  // separates the two node kinds. Two banks can share an account name
-  // ("Checking") — disambiguate only the duplicates, with the source
-  // prefixed (label logic unchanged from v1.6.0).
+  // Account keys embed U+0000 and merchant keys embed U+0001 —
+  // category names never do — that is what separates the three node
+  // kinds. Two banks can share an account name ("Checking") —
+  // disambiguate only the duplicates, with the source prefixed
+  // (label logic unchanged from v1.6.0).
   const isAcctKey = x => String(x).includes('\u0000');
+  const isMerchKey = x => String(x).includes('\u0001');
   const total = {}, catSide = {};
   for (const f of flows) {
     for (const end of [f.from, f.to])
       total[end] = (total[end] || 0) + f.flow;
+    // Merchant edges (category → merchant, or bucket → merchant) are
+    // downstream of the category — they never feed the category's
+    // side classification (the category's debit comes from the
+    // account → category edges alone).
+    if (isMerchKey(f.from) || isMerchKey(f.to)) continue;
     const c = isAcctKey(f.from) ? f.to : f.from;
     const t = catSide[c] || (catSide[c] = { debit: 0, credit: 0 });
     // Flipped orientation: account → category is a debit (spend)
@@ -945,12 +952,17 @@ function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet') {
   const debitCats = Object.keys(catSide)
     .filter(c => catSide[c].debit > 0)
     .sort((a, b) => catSide[b].debit - catSide[a].debit || a.localeCompare(b));
+  const merchantKeys = Object.keys(total).filter(k => isMerchKey(k));
+  const merchLabel = k => String(k).slice(1);
   const colItems = [
     ...creditCats.map(c => [c, 0]),
     ...acctKeys
       .sort((a, b) => total[b] - total[a] || a.localeCompare(b))
       .map(k => [acctLabel(k), 1]),
     ...debitCats.map(c => [c, 2]),
+    ...merchantKeys
+      .sort((a, b) => total[b] - total[a] || a.localeCompare(b))
+      .map(k => [merchLabel(k), 3]),
   ];
   const seen = new Set();
   const labels = [];
@@ -965,12 +977,13 @@ function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet') {
   // plugin packs columns from the top, so an oversized wrap just leaves
   // dead space below the bands. ~48px per node (node ~30px + nodePadding
   // 14 + margin), clamped so a dense chart still gets the old 640px.
-  const colCount = [0, 0, 0];
+  const colCount = [0, 0, 0, 0];
   for (const l of labels) colCount[column[l]]++;
   const maxCol = Math.max(...colCount);
   wrap.style.height = Math.max(280, Math.min(640, maxCol * 48 + 48)) + 'px';
   const nodeIndex = new Map(labels.map((l, i) => [l, i]));
-  const render = x => isAcctKey(x) ? acctLabel(x) : x;
+  const render = x => isAcctKey(x) ? acctLabel(x)
+                   : isMerchKey(x) ? String(x).slice(1) : x;
   const labelTotal = {};
   for (const f of flows)
     labelTotal[render(f.to)] = (labelTotal[render(f.to)] || 0) + f.flow;
@@ -990,8 +1003,11 @@ function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet') {
   // plugin, and every edge incident to a node resolves it to the same
   // color, so nodes stay consistent.
   const renderedAccts = new Set(acctKeys.map(acctLabel));
+  const renderedMerchants = new Set(merchantKeys.map(merchLabel));
+  const merchColor = (css.getPropertyValue('--accent') || '').trim() || '#ff9b51';
   const nodeColor = x => renderedAccts.has(String(x)) ? acctColor
-                                                      : catColor(String(x));
+                   : renderedMerchants.has(String(x)) ? merchColor
+                   : catColor(String(x));
 
   return new Chart(canvas, {
     type: 'sankey',
