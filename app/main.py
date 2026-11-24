@@ -60,6 +60,7 @@ async def lifespan(_: FastAPI):
         con.execute(imports.CREATE_IMPORTS_SQL)
         imports.ensure_import_column(con)
         imports.ensure_color_column(con)
+        ingest.ensure_llm_skipped_column(con)
         # Merchant tables must exist before the view: the view's merchant
         # layer reads merchant_overrides and merchant_rules.
         con.execute(merchants.CREATE_MERCHANT_RULES_SQL)
@@ -506,6 +507,9 @@ def classify():
             if cat:
                 analytics.set_category(con, u["id"], cat, source="llm")
                 updated += 1
+            else:
+                con.execute("UPDATE transactions SET llm_skipped = true WHERE id = ?",
+                            [u["id"]])
         con.commit()
         return {"classified": updated, "of": len(unknown), "unique_descriptions": len(unique_descs)}
     finally:
@@ -924,7 +928,10 @@ def classify_merchants(limit: int = 200, set_by: str = "uncategorized"):
                 merchants.set_merchant(con, r["id"], guess, source="llm")
                 classified += 1
             else:
+                con.execute("UPDATE transactions SET llm_skipped = true WHERE id = ?",
+                            [r["id"]])
                 skipped += 1
+        con.commit()
         return {"classified": classified, "skipped": skipped}
     finally:
         con.close()

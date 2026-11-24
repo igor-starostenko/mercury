@@ -417,7 +417,8 @@ CREATE_TABLE_SQL = """
         raw_category VARCHAR,
         currency    VARCHAR,
         key         VARCHAR,
-        classified  BOOLEAN DEFAULT false
+        classified  BOOLEAN DEFAULT false,
+        llm_skipped BOOLEAN DEFAULT false
     )
 """
 
@@ -449,6 +450,20 @@ CREATE_OVERRIDES_SQL = """
         source   VARCHAR
     )
 """
+
+
+def ensure_llm_skipped_column(con: duckdb.DuckDBPyConnection) -> None:
+    """One-time migration: add the llm_skipped column to transactions.
+
+    llm_skipped marks rows the LLM could not classify (empty/unusable
+    result) so future classify runs exclude them instead of re-sending
+    them every time. Cleared whenever a row is categorized or tagged.
+    """
+    cols = {r[1] for r in con.execute(
+        "PRAGMA table_info('transactions')").fetchall()}
+    if "llm_skipped" not in cols:
+        con.execute(
+            "ALTER TABLE transactions ADD COLUMN llm_skipped BOOLEAN DEFAULT false")
 
 
 def ensure_override_source(con: duckdb.DuckDBPyConnection) -> None:
@@ -651,6 +666,7 @@ def merge_txns(con: duckdb.DuckDBPyConnection,
     # but this merge must stand alone too.
     from . import imports as _imports  # local import: no cycle at module load
     _imports.ensure_import_column(con)
+    ensure_llm_skipped_column(con)
     existing = Counter(k for (k,) in con.execute(
         "SELECT key FROM transactions").fetchall())
     # The source listing is authoritative: every row a file lists is a real
