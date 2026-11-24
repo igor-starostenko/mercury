@@ -144,6 +144,7 @@ const SK_DEFAULT_MERCHANTS = 15; // first-visit default: top 15 by debit
 let _skFlows = null; // full /api/sankey payload (all time)
 let _skMerchants = null; // full /api/sankey-merchants payload (all time)
 let _acctColors = null; // raw account key (source + '\u0000' + account) → color
+let _merchColors = null; // merchant name → configured color
 
 // Same (source, account) identity makeSankeyChart uses for node keys —
 // two banks can share an account name ("Checking").
@@ -553,7 +554,7 @@ function renderSankeyChart() {
     !(_skFlows || []).length ? 'no transactions yet'
       : !a.size ? 'pick at least one account'
       : 'pick at least one spend category or "All other"',
-    _acctColors);
+    _acctColors, _merchColors);
 }
 
 /* Merchants table — distinct effective merchants (all time), each
@@ -661,6 +662,7 @@ function renderMerchantTable(data) {
             if (dot) dot.style.background = color;
             const bar = row.querySelector('.share-bar i');
             if (bar) bar.style.background = color;
+            if (_merchColors) { _merchColors.set(merchant, color); renderSankeyChart(); }
             toast('Color updated');
           } catch (e) { toast('Color failed: ' + e.message, 6000); }
         });
@@ -739,6 +741,7 @@ async function renderAll() {
   // are keyed by the same raw (source, account) identity the sankey
   // uses for node keys.
   _acctColors = new Map(accounts.map(a => [a.source + '\u0000' + a.account, a.color]));
+  _merchColors = new Map(((merchData && merchData.merchants) || []).map(d => [d.merchant, d.color]));
   _skFlows = sankeyFlows;
   _skMerchants = sankeyMerchants || [];
   skPickers();
