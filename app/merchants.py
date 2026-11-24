@@ -315,3 +315,155 @@ def match_counts(con: duckdb.DuckDBPyConnection,
                 if scope_matches(r_src, r_acct, src, acct) and p in d:
                     matches[rid] += 1
     return matches
+
+
+# ---------------------------------------------------------------------------
+# Distinct merchants: colors, rename, remove
+# ---------------------------------------------------------------------------
+CREATE_MERCHANT_COLORS_SQL = """
+    CREATE TABLE IF NOT EXISTS merchant_colors (
+        merchant VARCHAR PRIMARY KEY,
+        color    VARCHAR
+    )
+"""
+
+# A spread of visually distinct, saturated-but-not-neon colors. A new
+# merchant gets one at random; the user can change it from the panel.
+_MERCHANT_PALETTE = [
+    '#e5533d', '#3d8be5', '#3da35d', '#d9a02b', '#9b59b6',
+    '#1fa3a3', '#e07b39', '#c43d7c', '#5b8c3e', '#4a6fa5',
+    '#b05c2a', '#2a9d8f', '#8a4fd0', '#d63d6e', '#6d8a2a', '#3a86c8',
+]
+
+_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def ensure_colors_table(con: duckdb.DuckDBPyConnection) -> None:
+    con.execute(CREATE_MERCHANT_COLORS_SQL)
+
+
+def load_colors(con: duckdb.DuckDBPyConnection) -> dict[str, str]:
+    ensure_colors_table(con)
+    return {r[0]: r[1] for r in con.execute(
+        "SELECT merchant, color FROM merchant_colors").fetchall()}
+
+
+def color_for(con: duckdb.DuckDBPyConnection, merchant: str) -> str:
+    """The merchant's stored color, or a random palette pick (persisted)."""
+    ensure_colors_table(con)
+    row = con.execute(
+        "SELECT color FROM merchant_colors WHERE merchant = ?",
+        [merchant]).fetchone()
+    if row:
+        return row[0]
+    import random
+    color = random.choice(_MERCHANT_PALETTE)
+    con.execute("INSERT INTO merchant_colors (merchant, color) VALUES (?,?)",
+                [merchant, color])
+    return color
+
+
+def set_color(con: duckdb.DuckDBPyConnection, merchant: str,
+              color: str) -> str:
+    merchant = (merchant or "").strip()
+    color = (color or "").strip()
+    if not merchant:
+        raise ValueError("merchant must not be empty")
+    if not _COLOR_RE.match(color):
+        raise ValueError("color must be a #rrggbb hex value")
+    ensure_colors_table(con)
+    con.execute("INSERT INTO merchant_colors (merchant, color) VALUES (?,?) "
+                "ON CONFLICT (merchant) DO UPDATE SET color = excluded.color",
+                [merchant, color])
+    return color
+
+
+def rename_merchant(con: duckdb.DuckDBPyConnection, old: str,
+                    new: str) -> dict:
+    """Re-tag every row carrying `old` to `new`: stored overrides, rule
+    layer, and the color entry. Rules/overrides are rewritten, not copied —
+    a renamed merchant does not leave its old label behind."""
+    old = (old or "").strip()
+    new = (new or "").strip()
+    if not old:
+        raise ValueError("old merchant must not be empty")
+    if not new:
+        raise ValueError("new merchant must not be empty")
+    if len(new) > MAX_MERCHANT_LEN:
+        raise ValueError(f"merchant too long (max {MAX_MERCHANT_LEN} chars)")
+    if old == new:
+        return {"old": old, "new": new, "overrides": 0, "rules": 0}
+    ensure_table(con)
+    ensure_overrides_table(con)
+    n_overrides = con.execute(
+        "UPDATE merchant_overrides SET merchant = ? WHERE merchant = ?",
+        [new, old]).rowcount or 0
+    n_rules = con.execute(
+        "UPDATE merchant_rules SET merchant = ? WHERE merchant = ?",
+        [new, old]).rowcount or 0
+    # Color: the target name keeps its own color if it has one; otherwise
+    # it inherits the old merchant's color.
+    ensure_colors_table(con)
+    old_color = con.execute(
+        "SELECT color FROM merchant_colors WHERE merchant = ?", [old]).fetchone()
+    new_color = con.execute(
+        "SELECT color FROM merchant_colors WHERE merchant = ?", [new]).fetchone()
+    if old_color and not new_color:
+        con.execute("INSERT INTO merchant_colors (merchant, color) VALUES (?,?) "
+                    "ON CONFLICT (merchant) DO UPDATE SET color = excluded.color",
+                    [new, old_color[0]])
+    con.execute("DELETE FROM merchant_colors WHERE merchant = ?", [old])
+    return {"old": old, "new": new, "overrides": n_overrides, "rules": n_rules}
+
+
+def remove_merchant(con: duckdb.DuckDBPyConnection, merchant: str) -> dict:
+    """Drop every trace of a merchant: overrides (rows revert to the rule
+    layer/nothing), rules (merchant layer disappears), and the color entry.
+    Returns counts of what was removed."""
+    merchant = (merchant or "").strip()
+    if not merchant:
+        raise ValueError("merchant must not be empty")
+    ensure_table(con)
+    ensure_overrides_table(con)
+    n_overrides = con.execute(
+        "DELETE FROM merchant_overrides WHERE merchant = ?",
+        [merchant]).rowcount or 0
+    n_rules = con.execute(
+        "DELETE FROM merchant_rules WHERE merchant = ?",
+        [merchant]).rowcount or 0
+    ensure_colors_table(con)
+    n_colors = con.execute(
+        "DELETE FROM merchant_colors WHERE merchant = ?",
+        [merchant]).rowcount or 0
+    return {"merchant": merchant, "overrides": n_overrides,
+            "rules": n_rules, "color": n_colors}
+
+
+def distinct_merchants(con: duckdb.DuckDBPyConnection,
+                       limit: int = 1000) -> list[dict]:
+    """All distinct effective merchants (ignored rows excluded), newest-
+    nowhere sorted by gross debit spend descending. Each entry carries the
+    stored-or-randomly-assigned color and the aggregate stats."""
+    rows = con.execute("""
+        SELECT v.merchant, COUNT(*) AS n,
+               SUM(v.amount) AS net,
+               SUM(CASE WHEN v.amount < 0 THEN -v.amount ELSE 0 END) AS spend
+        FROM effective_transactions AS v
+        WHERE v.merchant IS NOT NULL AND v.merchant <> ''
+          AND COALESCE(v.category, '') <> 'Ignored'
+          AND COALESCE(v.date_ignored, false) = false
+        GROUP BY v.merchant
+        ORDER BY spend DESC, merchant ASC
+        LIMIT ?
+    """, [limit]).fetchall()
+    ensure_colors_table(con)
+    out = []
+    for merchant, n, net, spend in rows:
+        out.append({
+            "merchant": merchant,
+            "n": int(n),
+            "net": float(net or 0),
+            "spend": float(spend or 0),
+            "color": color_for(con, merchant),
+        })
+    return out
