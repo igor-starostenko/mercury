@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ingest, analytics, llm, rules, merchants, date_ignores, imports
+from . import ingest, analytics, llm, rules, merchants, date_ignores, imports, scoped_sankey
 
 DB_PATH = ingest.DB_PATH
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -246,18 +246,19 @@ def categories(year: str | None = None, month: str | None = None):
 
 
 @app.get("/api/sankey-merchants")
-def sankey_merchants():
-    """Merchant column of the Overview Sankey: per
+def sankey_merchants(year: str | None = None, month: str | None = None):
+    """Merchant column of the Sankey: per
     (source, account, effective category, effective merchant)
     sign-split movement (debit = SUM(ABS(amount)) over negative rows,
     credit over positive rows, amount = debit + credit) — the client
     fans each rendered spend category (or the "All other" bucket) out
     to its merchants. Rows with no effective merchant carry
     merchant='' and render no merchant edge. Non-ignored, non-zero,
-    all time."""
+    all time — or scoped to the ?year=YYYY / ?month=YYYY-MM filter
+    (used by the Year and Month pages; the Overview passes neither)."""
     con = get_con()
     try:
-        return analytics.sankey_merchants_flow(con)
+        return scoped_sankey.sankey_merchants_flow(con, year, month)
     finally:
         con.close()
 
@@ -272,19 +273,21 @@ def accounts():
 
 
 @app.get("/api/sankey")
-def sankey():
-    """3-column sankey flows for the Overview sankey chart — credit
-    (income) categories left, accounts middle, debit (spend)
-    categories right: credit flows category → account, debit flows
-    account → category (the "All other" bucket aggregates the
-    unselected debit categories account → bucket). Per
-    (source, account, effective category) movement split by sign —
-    debit = SUM(ABS(amount)) over negative (spend) rows, credit over
-    positive (income) rows, amount = debit + credit (kept for
-    backward compatibility) — non-ignored, non-zero rows, all time."""
+def sankey(year: str | None = None, month: str | None = None):
+    """3-column sankey flows — credit (income) categories left,
+    accounts middle, debit (spend) categories right: credit flows
+    category → account, debit flows account → category (the "All
+    other" bucket aggregates the unselected debit categories
+    account → bucket). Per (source, account, effective category)
+    movement split by sign — debit = SUM(ABS(amount)) over negative
+    (spend) rows, credit over positive (income) rows, amount = debit +
+    credit (kept for backward compatibility) — non-ignored, non-zero
+    rows, all time — or scoped to the ?year=YYYY / ?month=YYYY-MM
+    filter (used by the Year and Month pages; the Overview passes
+    neither)."""
     con = get_con()
     try:
-        return analytics.sankey_flow(con)
+        return scoped_sankey.sankey_flow(con, year, month)
     finally:
         con.close()
 
