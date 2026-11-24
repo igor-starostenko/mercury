@@ -391,6 +391,15 @@ tr.open .chev { transform: rotate(90deg); color: var(--accent); }
 .catpick-item.sk-all-other { border-top: 1px solid var(--border);
   margin-top: 5px; padding-top: 7px; color: var(--muted); }
 .catpick-item.sk-all-other .dot { background: var(--muted); }
+/* Merchant picker: sticky search box above the checkbox list — the
+   list scrolls under it so the search stays reachable. */
+.catpick-search { position: sticky; top: 0; z-index: 1;
+  width: 100%; box-sizing: border-box; margin: 0 0 6px;
+  padding: 5px 8px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--panel); color: var(--text);
+  font-size: 12px; }
+.catpick-search:focus { outline: none; border-color: var(--accent); }
+.catpick-search::-webkit-search-cancel-button { cursor: pointer; }
 .share-bar { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
 .share-bar i { display: block; height: 100%; border-radius: 3px; }
 /* Bidirectional share bar (category table): left half = spend, right half =
