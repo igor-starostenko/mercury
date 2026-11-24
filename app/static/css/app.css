@@ -618,3 +618,6 @@ mark {
 @keyframes spin { to { transform: rotate(360deg); } }
 button:disabled .btn-spinner { border-color: rgba(255,255,255,.25); border-top-color: currentColor; }
 .section-head button.busy { opacity: 1; cursor: progress; }
+
+/* Find Transactions head: push toggle + classify to the right side */
+.section-head .head-right { margin-left: auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
