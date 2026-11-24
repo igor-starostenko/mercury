@@ -11,8 +11,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 
 import duckdb
@@ -28,6 +29,28 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 MAX_UPLOAD_FILES = 200
 MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
+
+# In-flight classify guard: the two classify endpoints can run long (LLM
+# batches), so the UI polls /api/classify/status and stays disabled while a
+# run is in flight — including after a full page navigation mid-run. A
+# second request is rejected with 409 so two tabs can't double-run.
+_classify_lock = threading.Lock()
+_classify_state = {"running": False, "kind": None}
+
+
+@contextmanager
+def _classify_guard(kind):
+    if not _classify_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409,
+                            detail="A classify run is already in progress")
+    _classify_state["running"] = True
+    _classify_state["kind"] = kind
+    try:
+        yield
+    finally:
+        _classify_state["running"] = False
+        _classify_state["kind"] = None
+        _classify_lock.release()
 
 
 def get_con() -> duckdb.DuckDBPyConnection:
@@ -94,6 +117,11 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Mercury", lifespan=lifespan)
+
+
+@app.get("/api/classify/status")
+def classify_status():
+    return {"running": _classify_state["running"], "kind": _classify_state["kind"]}
 
 
 # ---------------------------------------------------------------------------
@@ -491,29 +519,30 @@ def classify():
             status_code=503,
             detail="LLM is not configured — set both MERCURY_LLM_ENDPOINT "
                    "and MERCURY_LLM_MODEL and restart the server")
-    con = get_con()
-    try:
-        unknown = analytics.unknown_categories(con, limit=None)
-        if not unknown:
-            return {"classified": 0, "of": 0}
-        # Classify each distinct description once; identical descriptions
-        # share one LLM result. Order-preserving dict keeps first-seen order.
-        unique_descs = list(dict.fromkeys(u["description"] for u in unknown))
-        results = llm.classify_batch_llm(unique_descs)
-        cat_by_desc = dict(zip(unique_descs, results))
-        updated = 0
-        for u in unknown:
-            cat = cat_by_desc.get(u["description"])
-            if cat:
-                analytics.set_category(con, u["id"], cat, source="llm")
-                updated += 1
-            else:
-                con.execute("UPDATE transactions SET llm_skipped = true WHERE id = ?",
-                            [u["id"]])
-        con.commit()
-        return {"classified": updated, "of": len(unknown), "unique_descriptions": len(unique_descs)}
-    finally:
-        con.close()
+    with _classify_guard("category"):
+        con = get_con()
+        try:
+            unknown = analytics.unknown_categories(con, limit=None)
+            if not unknown:
+                return {"classified": 0, "of": 0}
+            # Classify each distinct description once; identical descriptions
+            # share one LLM result. Order-preserving dict keeps first-seen order.
+            unique_descs = list(dict.fromkeys(u["description"] for u in unknown))
+            results = llm.classify_batch_llm(unique_descs)
+            cat_by_desc = dict(zip(unique_descs, results))
+            updated = 0
+            for u in unknown:
+                cat = cat_by_desc.get(u["description"])
+                if cat:
+                    analytics.set_category(con, u["id"], cat, source="llm")
+                    updated += 1
+                else:
+                    con.execute("UPDATE transactions SET llm_skipped = true WHERE id = ?",
+                                [u["id"]])
+            con.commit()
+            return {"classified": updated, "of": len(unknown), "unique_descriptions": len(unique_descs)}
+        finally:
+            con.close()
 
 
 @app.get("/api/transactions")
@@ -909,41 +938,42 @@ def classify_merchants(set_by: str = "uncategorized"):
     resulting merchant is applied to every transaction sharing that
     description. Returns the number classified and the number skipped
     (empty descriptions, no identifiable merchant, or endpoint failure)."""
-    con = get_con()
-    try:
-        rows = analytics.merchant_rows(con, limit=None,
-                                       include_uncategorized=True,
-                                       set_by=set_by)
-        targets = rows["rows"]
-        if not targets:
-            return {"classified": 0, "skipped": 0}
-        # Classify each distinct description once; identical descriptions
-        # share one LLM result. Order-preserving dict keeps first-seen order.
-        unique_descs = list(dict.fromkeys(r["description"] or "" for r in targets))
+    with _classify_guard("merchant"):
+        con = get_con()
         try:
-            guessed = llm.classify_merchants_batch_llm(unique_descs)
-        except llm.LLMNotConfigured as e:
-            raise HTTPException(status_code=503, detail=str(e))
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=str(e))
-        guess_by_desc = dict(zip(unique_descs, guessed))
-        classified = 0
-        skipped = 0
-        for r in targets:
-            guess = guess_by_desc.get(r["description"] or "")
-            if guess:
-                merchants.set_merchant(con, r["id"], guess, source="llm")
-                classified += 1
-            else:
-                con.execute("UPDATE transactions SET llm_skipped = true WHERE id = ?",
-                            [r["id"]])
-                skipped += 1
-        con.commit()
-        return {"classified": classified, "skipped": skipped,
-                "of": len(targets),
-                "unique_descriptions": len(unique_descs)}
-    finally:
-        con.close()
+            rows = analytics.merchant_rows(con, limit=None,
+                                           include_uncategorized=True,
+                                           set_by=set_by)
+            targets = rows["rows"]
+            if not targets:
+                return {"classified": 0, "skipped": 0}
+            # Classify each distinct description once; identical descriptions
+            # share one LLM result. Order-preserving dict keeps first-seen order.
+            unique_descs = list(dict.fromkeys(r["description"] or "" for r in targets))
+            try:
+                guessed = llm.classify_merchants_batch_llm(unique_descs)
+            except llm.LLMNotConfigured as e:
+                raise HTTPException(status_code=503, detail=str(e))
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=str(e))
+            guess_by_desc = dict(zip(unique_descs, guessed))
+            classified = 0
+            skipped = 0
+            for r in targets:
+                guess = guess_by_desc.get(r["description"] or "")
+                if guess:
+                    merchants.set_merchant(con, r["id"], guess, source="llm")
+                    classified += 1
+                else:
+                    con.execute("UPDATE transactions SET llm_skipped = true WHERE id = ?",
+                                [r["id"]])
+                    skipped += 1
+            con.commit()
+            return {"classified": classified, "skipped": skipped,
+                    "of": len(targets),
+                    "unique_descriptions": len(unique_descs)}
+        finally:
+            con.close()
 
 
 # ---------------------------------------------------------------------------

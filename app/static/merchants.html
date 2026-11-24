@@ -770,9 +770,11 @@ function renderMerchants() {
   const q = (mrSearch || '').trim();
   const qre = q ? txnSearchRegex(q) : null;
   const noLlm = !window.LLM_CONFIGURED;
-  $id('mrClassifyBtn').disabled = !mrPendingTotal || noLlm;
-  $id('mrClassifyBtn').title = noLlm
-    ? 'LLM not configured — set both MERCURY_LLM_ENDPOINT and MERCURY_LLM_MODEL, then restart the server' : '';
+  $id('mrClassifyBtn').disabled = classifyBusy() || !mrPendingTotal || noLlm;
+  $id('mrClassifyBtn').title = classifyBusy()
+    ? 'Classifying…'
+    : (noLlm
+      ? 'LLM not configured — set both MERCURY_LLM_ENDPOINT and MERCURY_LLM_MODEL, then restart the server' : '');
   $id('mrShownCount').textContent = (mrTotal > rows.length
     ? rows.length + ' of ' + mrTotal + ' shown'
     : rows.length + ' shown');
@@ -946,6 +948,7 @@ wireTxnSearchBar($id('mrSearch'), $id('mrSetBySel'),
 
 (async function init() {
   renderChrome('merchants');
+  startClassifyStatusPolling();
   wireSkPickers();
   try {
     const [health, accounts] = await Promise.all([

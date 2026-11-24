@@ -568,17 +568,74 @@ async function resetImportColor(btn) {
 }
 
 /* ------------------------------------------------------------------- classify */
+/* In-flight classification tracking. The server holds a guard across the
+ * whole run (see app/main.py), so a run started on one page keeps going
+ * after the user navigates away — this page polls /api/classify/status and
+ * keeps the button disabled/busy while it is in flight, even after a full
+ * page reload mid-run. window._classifyBusy marks a run THIS page started;
+ * window._classifyServerRunning is the last poll result (null = unknown). */
+window._classifyBusy = false;
+window._classifyServerRunning = null;
+
+function classifyBusy() {
+  return window._classifyBusy || window._classifyServerRunning === true;
+}
+
+/* Keep the classify button(s) disabled while classifyBusy() is true. Called
+ * by the poll tick and by render functions; the busy spinner mark itself is
+ * owned by withBusyButton (the page that started the run), so here we only
+ * assert the disabled state — a stale busy mark is cleared so the label and
+ * spinner from a previous run don't linger. */
+function applyClassifyButtonState() {
+  const busy = classifyBusy();
+  for (const id of ['classifyBtn', 'mrClassifyBtn']) {
+    const btn = $id(id);
+    if (!btn) continue;
+    if (busy) {
+      btn.disabled = true;
+      if (!btn.dataset.label) btn.title = 'Classifying…';
+    } else if (btn.classList.contains('busy') && !window._classifyBusy) {
+      btn.classList.remove('busy');
+      if (btn.dataset.label) { btn.textContent = btn.dataset.label; delete btn.dataset.label; }
+      btn.disabled = false; // re-render re-asserts the pending/LLM state
+    }
+  }
+}
+
+let _classifyPollTimer = null;
+function startClassifyStatusPolling() {
+  if (_classifyPollTimer) return;
+  const tick = async () => {
+    try {
+      const res = await api('/api/classify/status');
+      const was = window._classifyServerRunning;
+      window._classifyServerRunning = !!res.running;
+      if (was === true && window._classifyServerRunning === false
+          && window.onDataChanged) {
+        setTimeout(onDataChanged, 400); // run just finished — refresh
+      }
+      applyClassifyButtonState();
+    } catch (e) { /* keep last known state */ }
+  };
+  tick();
+  _classifyPollTimer = setInterval(tick, 2000);
+}
+
 async function withBusyButton(id, busyText, fn) {
   const btn = $id(id);
-  if (!btn) return fn();
+  window._classifyBusy = true;
+  if (!btn) { try { return await fn(); } finally { window._classifyBusy = false; } }
   const label = btn.textContent;
+  btn.dataset.label = label;
   btn.disabled = true;
   btn.classList.add('busy');
   btn.innerHTML = '<span class="btn-spinner"></span>' + busyText;
   try { return await fn(); }
   finally {
+    window._classifyBusy = false;
     btn.classList.remove('busy');
     btn.textContent = label;
+    delete btn.dataset.label;
     btn.disabled = false; // re-render (onDataChanged) re-asserts the pending/LLM state
   }
 }
