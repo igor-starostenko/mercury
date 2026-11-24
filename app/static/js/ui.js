@@ -602,34 +602,58 @@ function applyClassifyButtonState() {
   }
 }
 
-/* Poll the server status while the tab is visible and the current view has
- * pending classify work. shouldPoll: () => boolean — evaluated every tick, so
- * switching tabs or the pending counts changing takes effect on the next
- * tick. Skipped entirely (no fetch) when the page shouldn't be tracking a
- * run — e.g. merchants pending but the categories tab is active. */
+/* Adaptive status polling. One check at page load; while a run is in flight,
+ * re-check every 2s so the page re-asserts the disabled/busy state and
+ * refreshes when the run finishes — then the interval stops. Zero requests
+ * when idle. shouldPoll: () => boolean — evaluated every tick, so switching
+ * tabs or the pending counts changing takes effect on the next tick. Skipped
+ * entirely (no fetch) when the page shouldn't be tracking a run — e.g.
+ * merchants pending but the categories tab active. A 409 (another tab started
+ * a run) restarts the interval via startClassifyStatusPolling(). */
 let _classifyPollTimer = null;
-function startClassifyStatusPolling(shouldPoll) {
-  if (_classifyPollTimer) return;
-  const tick = async () => {
-    if (document.visibilityState !== 'visible') return;
-    if (typeof shouldPoll === 'function' && !shouldPoll()) return;
-    try {
-      const res = await api('/api/classify/status');
-      const was = window._classifyServerRunning;
-      window._classifyServerRunning = !!res.running;
-      if (was === true && window._classifyServerRunning === false
-          && window.onDataChanged) {
-        setTimeout(onDataChanged, 400); // run just finished — refresh
-      }
-      applyClassifyButtonState();
-    } catch (e) { /* keep last known state */ }
-  };
-  tick();
-  _classifyPollTimer = setInterval(tick, 2000);
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') tick();
-  });
+let _classifyShouldPoll = null;
+
+function stopClassifyStatusPolling() {
+  if (_classifyPollTimer) { clearInterval(_classifyPollTimer); _classifyPollTimer = null; }
 }
+
+function ensureClassifyPollInterval() {
+  if (_classifyPollTimer) return;
+  _classifyPollTimer = setInterval(classifyStatusTick, 2000);
+}
+
+async function classifyStatusTick() {
+  if (document.visibilityState !== 'visible') return;
+  let shouldPoll = true;
+  try { shouldPoll = typeof _classifyShouldPoll === 'function' ? _classifyShouldPoll() : true; }
+  catch (e) { shouldPoll = true; }
+  if (!shouldPoll) { stopClassifyStatusPolling(); return; }
+  let res;
+  try { res = await api('/api/classify/status'); }
+  catch (e) { return; } // keep last known state
+  const was = window._classifyServerRunning;
+  window._classifyServerRunning = !!res.running;
+  if (was === true && window._classifyServerRunning === false
+      && window.onDataChanged) {
+    setTimeout(onDataChanged, 400); // run just finished — refresh
+  }
+  applyClassifyButtonState();
+  // Keep polling only while a run is in flight; stop otherwise. If the page
+  // was idle when the run started elsewhere, this tick is the only signal —
+  // make sure the interval is (re)started so the finish is still detected.
+  if (window._classifyServerRunning) ensureClassifyPollInterval();
+  else stopClassifyStatusPolling();
+}
+
+function startClassifyStatusPolling(shouldPoll) {
+  if (typeof shouldPoll === 'function') _classifyShouldPoll = shouldPoll;
+  ensureClassifyPollInterval();
+  classifyStatusTick();
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') classifyStatusTick();
+});
 
 async function withBusyButton(id, busyText, fn) {
   const btn = $id(id);
@@ -657,7 +681,12 @@ async function runClassify() {
       const res = await api('/api/classify', { method: 'POST' });
       toast(`Classified ${res.classified} of ${res.of}`);
     } catch (e) {
-      toast('Classify failed: ' + e.message, 6000);
+      if (e.status === 409) {
+        toast('A classify run is already in progress — this page will refresh when it finishes', 6000);
+        startClassifyStatusPolling();
+      } else {
+        toast('Classify failed: ' + e.message, 6000);
+      }
     }
   });
   if (window.onDataChanged) setTimeout(onDataChanged, 400);

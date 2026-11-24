@@ -60,7 +60,9 @@ async function api(url, opt) {
   if (!r.ok) {
     let d = '';
     try { d = (await r.json()).detail || ''; } catch (e) { /* not json */ }
-    throw new Error(d || r.status);
+    const err = new Error(d || r.status);
+    err.status = r.status;
+    throw err;
   }
   return r.json();
 }
