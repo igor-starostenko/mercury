@@ -586,7 +586,7 @@ async function runClassify() {
 
 (async function init() {
   renderChrome('transactions');
-  startClassifyStatusPolling();
+  startClassifyStatusPolling(() => txnTab === 'category' ? ovPendingTotal > 0 : mrPendingTotal > 0);
   const [cats, health, accounts] = await Promise.all([
     api('/api/standard-categories'),
     api('/api/health'),

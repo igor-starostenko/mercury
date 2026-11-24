@@ -948,7 +948,7 @@ wireTxnSearchBar($id('mrSearch'), $id('mrSetBySel'),
 
 (async function init() {
   renderChrome('merchants');
-  startClassifyStatusPolling();
+  startClassifyStatusPolling(() => mrPendingTotal > 0);
   wireSkPickers();
   try {
     const [health, accounts] = await Promise.all([
