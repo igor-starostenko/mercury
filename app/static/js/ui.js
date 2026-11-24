@@ -1443,6 +1443,7 @@ function txnSortTh(key, label, extra, st, sortable) {
 function txnTableHTML(txns, opts = {}) {
   if (!txns.length) return '<p class="empty">No transactions.</p>';
   const editable = opts.editable !== false;
+  const merchantEditable = opts.editable === 'merchant';
   const sortable = opts.sortable !== false;
   const st = opts.sort;
   const qre = opts.search ? txnSearchRegex(opts.search) : null;
@@ -1451,18 +1452,20 @@ function txnTableHTML(txns, opts = {}) {
     <table>
       <thead><tr>
         ${th('date', 'Date')}<th>Source</th>${th('description', 'Description')}
-        ${editable ? '<th>Category</th>' : ''}
+        ${editable && !merchantEditable ? '<th>Category</th>' : ''}
+        ${merchantEditable ? th('merchant', 'Merchant') : ''}
         ${th('amount', 'Amount', 'num')}
-        ${editable ? '<th style="width:34px"></th>' : ''}
+        ${editable && !merchantEditable ? '<th style="width:34px"></th>' : ''}
       </tr></thead>
       <tbody>${txns.map(t => `
         <tr class="${t.ignored ? 'txn-ignored' : ''}">
           <td>${esc(t.date)}</td>
           <td>${esc(t.source)}</td>
           <td class="desc" title="${esc(t.description)}">${highlightDesc(t.description, qre)}</td>
-          ${editable ? `<td><select class="cat-select" data-id="${t.id}">${catOptions(t.category)}</select>${t.ignored ? '<span class="ignored-tag">ignored — not counted in totals</span>' : ''}${setByBadge(t)}${ruleNoteHTML(t)}</td>` : ''}
+          ${editable && !merchantEditable ? `<td><select class="cat-select" data-id="${t.id}">${catOptions(t.category)}</select>${t.ignored ? '<span class="ignored-tag">ignored — not counted in totals</span>' : ''}${setByBadge(t)}${ruleNoteHTML(t)}</td>` : ''}
+          ${merchantEditable ? `<td><input class="merch-edit-input" data-id="${t.id}" value="${esc(t.merchant || '')}" placeholder="—" aria-label="Merchant for transaction ${t.id}">${t.ignored ? '<span class="ignored-tag">ignored — not counted in totals</span>' : ''}</td>` : ''}
           <td class="num ${t.amount < 0 ? 'neg' : 'pos'}">${fmtMoney(t.amount)}</td>
-          ${editable ? `<td class="num"><button class="txn-del" data-id="${t.id}" title="Delete (soft — restorable)" onclick="deleteTxn(${t.id}, this)">×</button></td>` : ''}
+          ${editable && !merchantEditable ? `<td class="num"><button class="txn-del" data-id="${t.id}" title="Delete (soft — restorable)" onclick="deleteTxn(${t.id}, this)">×</button></td>` : ''}
         </tr>`).join('')}
       </tbody>
     </table>`;
@@ -1496,6 +1499,7 @@ function renderTxnTable(container) {
         ? `<p class="empty">No matching transactions — ${all.length} transaction${all.length === 1 ? '' : 's'} in this period hidden by the ${by !== 'all' ? (q ? 'search and Set-by filter' : 'Set-by filter') : 'search'}.</p>`
         : '<p class="empty">No transactions.</p>');
   wireCategorySelects(container);
+  wireMerchantInputs(container);
   wireTxnSort(container);
 }
 /* Click a sortable header: same column flips direction, new column starts
@@ -1675,6 +1679,26 @@ function catOptions(sel) {
   const list = [...CATS];
   if (sel && !list.includes(sel)) list.push(sel);
   return list.map(c => `<option${c === sel ? ' selected' : ''}>${esc(c)}</option>`).join('');
+}
+
+/* Attach merchant-override handlers to inputs inside root. */
+function wireMerchantInputs(root) {
+  root.querySelectorAll('input.merch-edit-input').forEach(inp => {
+    inp.addEventListener('change', async () => {
+      const val = inp.value.trim();
+      try {
+        await api('/api/merchants/overrides', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: [+inp.dataset.id], merchant: val || null }),
+        });
+        toast(val ? 'Merchant updated' : 'Merchant cleared');
+        if (window.onDataChanged) setTimeout(onDataChanged, 400);
+      } catch (e) {
+        toast('Update failed: ' + e.message, 5000);
+      }
+    });
+  });
 }
 
 /* Attach category-assignment handlers to selects inside root. */

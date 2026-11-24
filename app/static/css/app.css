@@ -599,6 +599,15 @@ mark {
   min-width: 120px; width: 100%;
 }
 .mr-input:focus { outline: none; border-color: var(--accent); }
+/* Same free-form merchant input, rendered in transaction tables
+   (merchants drill-down) — reuse the merchants-panel styling. */
+.merch-edit-input {
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 3px 6px; font-size: 12px; font-family: inherit;
+  min-width: 120px; width: 100%;
+}
+.merch-edit-input:focus { outline: none; border-color: var(--accent); }
 
 /* Busy state on primary buttons (classify etc.): spinner + disabled */
 .btn-spinner {

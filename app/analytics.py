@@ -656,7 +656,8 @@ def transactions(con: duckdb.DuckDBPyConnection,
                v.amount, v.description, v.category, t.category,
                v.override_source,
                (COALESCE(v.category, '') = 'Ignored'
-                OR COALESCE(v.date_ignored, false)) AS ignored
+                OR COALESCE(v.date_ignored, false)) AS ignored,
+               v.merchant, v.merchant_source
         FROM effective_transactions AS v
         JOIN transactions AS t ON t.id = v.id
         {("WHERE " + " AND ".join(conds)) if conds else ""}
@@ -692,6 +693,10 @@ def transactions(con: duckdb.DuckDBPyConnection,
                             "position": matched[0].position}
                            if matched else None),
             "rule_matches": len(matched),
+            # Effective merchant (override > rule layer > LLM) — the same
+            # chain as the merchants table.
+            "merchant": r[10] or None,
+            "merchant_source": r[11] or None,
         })
     return out
 
