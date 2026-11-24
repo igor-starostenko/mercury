@@ -329,11 +329,13 @@ def sankey_merchants_flow(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]
 def unknown_categories(con: duckdb.DuckDBPyConnection,
                        limit: int = 200) -> list[dict[str, Any]]:
     rows = con.execute("""
-        SELECT id, source, account, CAST(txn_date AS VARCHAR), amount,
-               description, raw_category
-        FROM effective_transactions
-        WHERE category IS NULL OR category = '' OR category = 'Uncategorized'
-        ORDER BY txn_date DESC
+        SELECT v.id, v.source, v.account, CAST(v.txn_date AS VARCHAR), v.amount,
+               v.description, v.raw_category
+        FROM effective_transactions AS v
+        JOIN transactions AS t ON t.id = v.id
+        WHERE (v.category IS NULL OR v.category = '' OR v.category = 'Uncategorized')
+          AND COALESCE(t.llm_skipped, false) = false
+        ORDER BY v.txn_date DESC
         LIMIT ?
     """, [limit]).fetchall()
     return [
@@ -359,7 +361,7 @@ def set_category(con: duckdb.DuckDBPyConnection, txn_id: int,
                     [txn_id])
         con.execute(
             "UPDATE transactions SET classified = "
-            "(category IS NOT NULL AND category != '') WHERE id = ?",
+            "(category IS NOT NULL AND category != ''), llm_skipped = false WHERE id = ?",
             [txn_id])
     else:
         con.execute(
@@ -367,6 +369,7 @@ def set_category(con: duckdb.DuckDBPyConnection, txn_id: int,
             "ON CONFLICT (txn_id) DO UPDATE SET category = excluded.category, "
             "source = excluded.source",
             [txn_id, str(category).strip(), source])
+        con.execute("UPDATE transactions SET llm_skipped = false WHERE id = ?", [txn_id])
         con.execute("UPDATE transactions SET classified = true WHERE id = ?",
                     [txn_id])
 
@@ -478,7 +481,8 @@ def override_rows(con: duckdb.DuckDBPyConnection,
         # also appear in an 'all' list.
         where = ["v.override_source IS NULL AND o2.txn_id IS NULL"
                  " AND (t.category IS NULL OR t.category = ''"
-                 " OR t.category = 'Uncategorized')"]
+                 " OR t.category = 'Uncategorized')"
+                 " AND COALESCE(t.llm_skipped, false) = false"]
         params = []
     elif q_norm:
         # A typed search runs over the FULL history — not just this
@@ -499,7 +503,8 @@ def override_rows(con: duckdb.DuckDBPyConnection,
         # source alone would hide it from the list.
         where = ["(o2.txn_id IS NOT NULL OR v.override_source = 'rule'"
                  " OR (? = 1 AND (t.category IS NULL OR t.category = ''"
-                 " OR t.category = 'Uncategorized')))"]
+                 " OR t.category = 'Uncategorized')"
+                 " AND COALESCE(t.llm_skipped, false) = false))"]
         params = [int(include_uncategorized)]
     if q_norm:
         # Whitespace-normalized substring, exactly like the UI search
@@ -527,6 +532,7 @@ def override_rows(con: duckdb.DuckDBPyConnection,
             WHERE v.override_source IS NULL
               AND (t.category IS NULL OR t.category = ''
                    OR t.category = 'Uncategorized')
+              AND COALESCE(t.llm_skipped, false) = false
         """).fetchone()
 
     rows = con.execute(f"""
@@ -788,7 +794,8 @@ def merchant_rows(con: duckdb.DuckDBPyConnection,
         params: list[Any] = [set_by]
     elif set_by == "uncategorized":
         # Truly pending rows: no effective merchant.
-        where = ["v.merchant IS NULL OR v.merchant = ''"]
+        where = ["(v.merchant IS NULL OR v.merchant = '')"
+                 " AND COALESCE(t.llm_skipped, false) = false"]
         params = []
     elif q_norm:
         # Typed search scans the FULL history.
@@ -798,7 +805,8 @@ def merchant_rows(con: duckdb.DuckDBPyConnection,
         # Base set: rows with an effective merchant, plus (opt-in) rows
         # with none.
         where = ["(v.merchant IS NOT NULL AND v.merchant <> ''"
-                 " OR (? = 1 AND (v.merchant IS NULL OR v.merchant = '')))"]
+                 " OR (? = 1 AND (v.merchant IS NULL OR v.merchant = '')"
+                 " AND COALESCE(t.llm_skipped, false) = false))"]
         params = [int(include_uncategorized)]
     if q_norm:
         where.append(
@@ -810,6 +818,7 @@ def merchant_rows(con: duckdb.DuckDBPyConnection,
     total, = con.execute(f"""
         SELECT COUNT(*)
         FROM effective_transactions AS v
+        JOIN transactions AS t ON t.id = v.id
         WHERE {where_sql}
     """, params).fetchone()
 
@@ -818,7 +827,9 @@ def merchant_rows(con: duckdb.DuckDBPyConnection,
         pending, = con.execute("""
             SELECT COUNT(*)
             FROM effective_transactions AS v
-            WHERE v.merchant IS NULL OR v.merchant = ''
+            JOIN transactions AS t ON t.id = v.id
+            WHERE (v.merchant IS NULL OR v.merchant = '')
+              AND COALESCE(t.llm_skipped, false) = false
         """).fetchone()
 
     rows = con.execute(f"""
@@ -828,6 +839,7 @@ def merchant_rows(con: duckdb.DuckDBPyConnection,
                (COALESCE(v.category, '') = 'Ignored'
                 OR COALESCE(v.date_ignored, false)) AS ignored
         FROM effective_transactions AS v
+        JOIN transactions AS t ON t.id = v.id
         WHERE {where_sql}
         ORDER BY {_MERCHANT_SORTS[sort_by]} {sort_dir}, v.id ASC
         LIMIT ?

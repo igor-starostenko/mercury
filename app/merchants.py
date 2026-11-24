@@ -261,6 +261,8 @@ def set_merchant(con: duckdb.DuckDBPyConnection, txn_id: int,
     if merchant is None:
         con.execute("DELETE FROM merchant_overrides WHERE txn_id = ?",
                     [txn_id])
+        con.execute("UPDATE transactions SET llm_skipped = false WHERE id = ?",
+                    [txn_id])
         return True
     if len(merchant) > MAX_MERCHANT_LEN:
         raise ValueError(f"merchant too long (max {MAX_MERCHANT_LEN} chars)")
@@ -269,6 +271,8 @@ def set_merchant(con: duckdb.DuckDBPyConnection, txn_id: int,
                 "ON CONFLICT (txn_id) DO UPDATE SET merchant = excluded.merchant, "
                 "source = excluded.source",
                 [txn_id, merchant, source])
+    con.execute("UPDATE transactions SET llm_skipped = false WHERE id = ?",
+                [txn_id])
     return True
 
 
