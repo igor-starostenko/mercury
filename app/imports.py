@@ -220,8 +220,14 @@ def account_color(con: duckdb.DuckDBPyConnection, account: str, source: str) -> 
     carrying this account label's stored override, else the bank's
     primary color (neutral grey for unknown banks)."""
     row = con.execute(
-        "SELECT color FROM csv_imports WHERE account = ? ORDER BY id ASC LIMIT 1",
-        [account],
+        """
+        SELECT ci.color
+        FROM csv_imports AS ci
+        JOIN transactions AS t ON t.import_id = ci.id
+        WHERE ci.account = ? AND t.source = ?
+        ORDER BY ci.id ASC LIMIT 1
+        """,
+        [account, source],
     ).fetchone()
     return effective_color(row[0] if row else None, source)
 

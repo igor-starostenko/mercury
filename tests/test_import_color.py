@@ -127,3 +127,35 @@ def test_accounts_include_color(tmp_path):
     assert by_source["Chase"]["color"] == "#123456"
     # The other bank is untouched.
     assert by_source["Wells Fargo"]["color"] == "#d71e28"
+
+
+def test_accounts_color_scoped_by_source(tmp_path):
+    """Two banks can share an account label ("Checking") — a stored
+    override on one bank's import must not leak into the other."""
+    con = _conn(tmp_path)
+    con.execute(
+        "INSERT INTO csv_imports (id, filename, account, imported_at) "
+        "VALUES (1, 'chase.csv', 'Checking', now())")
+    con.execute(
+        "INSERT INTO csv_imports (id, filename, account, imported_at) "
+        "VALUES (2, 'wf.csv', 'Checking', now())")
+    con.executemany(
+        "INSERT INTO transactions (id, source, account, txn_date, amount, description, category, import_id) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        [
+            (1, "Chase", "Checking", "2026-01-05", -50.0, "WALMART", "Groceries", 1),
+            (2, "Wells Fargo", "Checking", "2026-01-06", -90.0, "PAYROLL", "Income", 2),
+        ],
+    )
+    imports.set_import_color(con, 1, "#ff8800")
+    rows = analytics.accounts(con)
+    by_source = {r["source"]: r for r in rows}
+    assert by_source["Chase"]["color"] == "#ff8800"
+    assert by_source["Wells Fargo"]["color"] == "#d71e28"
+
+    # Clearing the override restores the bank default for that bank only.
+    imports.set_import_color(con, 1, None)
+    rows = analytics.accounts(con)
+    by_source = {r["source"]: r for r in rows}
+    assert by_source["Chase"]["color"] == "#117aca"
+    assert by_source["Wells Fargo"]["color"] == "#d71e28"
