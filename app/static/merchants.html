@@ -725,13 +725,15 @@ async function addMrRule(e) {
 }
 
 async function runMerchantClassify() {
-  toast('Classifying…');
-  try {
-    const res = await api('/api/merchants/classify', { method: 'POST' });
-    toast(`Classified ${res.classified} (${res.skipped} skipped)`);
-  } catch (e) {
-    toast('Classify failed: ' + e.message, 6000);
-  }
+  await withBusyButton('mrClassifyBtn', 'Classifying…', async () => {
+    toast('Classifying…');
+    try {
+      const res = await api('/api/merchants/classify', { method: 'POST' });
+      toast(`Classified ${res.classified} (${res.skipped} skipped)`);
+    } catch (e) {
+      toast('Classify failed: ' + e.message, 6000);
+    }
+  });
   if (window.onDataChanged) setTimeout(onDataChanged, 400);
 }
 
