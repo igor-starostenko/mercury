@@ -515,9 +515,9 @@ async function renderYear(year) {
     await Promise.all([
     api('/api/monthly?year=' + encodeURIComponent(year)),
     api('/api/categories?year=' + encodeURIComponent(year)),
-    api('/api/years'),
+    api('/api/year-totals'),
     api('/api/summary?year=' + encodeURIComponent(year)),
-    api('/api/all-categories?year=' + encodeURIComponent(year)),
+    api('/api/monthly'), // all-time — the rolling 12-mo window must reach back into the prior year
     api('/api/accounts'),
     api('/api/sankey?year=' + encodeURIComponent(year)),
     api('/api/sankey-merchants?year=' + encodeURIComponent(year)),
