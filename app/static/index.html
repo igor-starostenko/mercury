@@ -131,7 +131,7 @@ let _flowCfg = null; // last chart config, so the view toggle re-draws
  */
 const SK_LS = 'mercury.sankeySel';
 const SK_ALL_OTHER = 'All other'; // node + menu entry for the catch-all
-const SK_DEFAULT_MERCHANTS = 50; // first-visit default: top 50 by debit
+const SK_DEFAULT_MERCHANTS = 15; // first-visit default: top 15 by debit
 let _skFlows = null; // full /api/sankey payload (all time)
 let _skMerchants = null; // full /api/sankey-merchants payload (all time)
 let _acctColors = null; // raw account key (source + '\u0000' + account) → color
@@ -246,7 +246,7 @@ function skPickers() {
     // A saved selection is respected as-is (a saved [] stays []),
     // normalized to names that still exist in the menu; first visit →
     // the first-paint default: accounts = the WHOLE menu, categories
-    // = only the top 8 by DEBIT spend, merchants = the top 50 by
+    // = only the top 8 by DEBIT spend, merchants = the top 15 by
     // DEBIT spend — the menu lists every DEBIT-spending merchant, so
     // defaulting to the whole menu would check all of them and leave
     // the "All other" bucket empty.
@@ -364,7 +364,7 @@ function paintSkMerchLabel(sel, total) {
 }
 
 /* Merchant picker: a search box on top of the checkbox list, so any
- * merchant can be found and picked (beyond the top-50 default). The
+ * merchant can be found and picked (beyond the top-15 default). The
  * menu rebuilds on every renderAll (data change) — the search text
  * resets with it, which is correct for a fresh payload. */
 function paintSkMerchPicker(opts, sel) {
