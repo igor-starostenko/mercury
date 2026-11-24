@@ -599,3 +599,13 @@ mark {
   min-width: 120px; width: 100%;
 }
 .mr-input:focus { outline: none; border-color: var(--accent); }
+
+/* Busy state on primary buttons (classify etc.): spinner + disabled */
+.btn-spinner {
+  display: inline-block; width: 12px; height: 12px; margin-right: 7px;
+  border: 2px solid rgba(255,255,255,.35); border-top-color: currentColor;
+  border-radius: 50%; vertical-align: -1px; animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+button:disabled .btn-spinner { border-color: rgba(255,255,255,.25); border-top-color: currentColor; }
+.section-head button.busy { opacity: 1; cursor: progress; }

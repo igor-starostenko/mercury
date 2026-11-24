@@ -568,14 +568,31 @@ async function resetImportColor(btn) {
 }
 
 /* ------------------------------------------------------------------- classify */
-async function runClassify() {
-  toast('Classifying…');
-  try {
-    const res = await api('/api/classify', { method: 'POST' });
-    toast(`Classified ${res.classified} of ${res.of}`);
-  } catch (e) {
-    toast('Classify failed: ' + e.message, 6000);
+async function withBusyButton(id, busyText, fn) {
+  const btn = $id(id);
+  if (!btn) return fn();
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.classList.add('busy');
+  btn.innerHTML = '<span class="btn-spinner"></span>' + busyText;
+  try { return await fn(); }
+  finally {
+    btn.classList.remove('busy');
+    btn.textContent = label;
+    btn.disabled = false; // re-render (onDataChanged) re-asserts the pending/LLM state
   }
+}
+
+async function runClassify() {
+  await withBusyButton('classifyBtn', 'Classifying…', async () => {
+    toast('Classifying…');
+    try {
+      const res = await api('/api/classify', { method: 'POST' });
+      toast(`Classified ${res.classified} of ${res.of}`);
+    } catch (e) {
+      toast('Classify failed: ' + e.message, 6000);
+    }
+  });
   if (window.onDataChanged) setTimeout(onDataChanged, 400);
 }
 
