@@ -94,6 +94,15 @@
     <div class="panel tight" id="catTable"></div>
   </section>
 
+  <section class="section">
+    <div class="section-head">
+      <h2>Merchants</h2>
+      <span class="hint">all time · click a row to drill down · rename, recolor or remove</span>
+      <span class="badge" id="merchCount" aria-live="polite"></span>
+    </div>
+    <div class="panel tight" id="merchTable"></div>
+  </section>
+
 </main>
 <div class="toast" id="toast"></div>
 <div id="modal-root"></div>
@@ -547,8 +556,133 @@ function renderSankeyChart() {
     _acctColors);
 }
 
+/* Merchants table — distinct effective merchants (all time), each
+ * with a randomly-assigned-then-user-changeable color. Click a row to
+ * unfold its transactions (same drill-down pattern as Spend by
+ * category). The detail header carries rename / recolor / remove
+ * controls; rename re-tags every row carrying the old name (overrides
+ * and rules), remove deletes every trace of the merchant. */
+function renderMerchantTable(data) {
+  const el = $id('merchTable');
+  const rows = (data && data.merchants) || [];
+  $id('merchCount').textContent = rows.length
+    ? rows.length + ' merchant' + (rows.length > 1 ? 's' : '') : '';
+  if (!rows.length) {
+    el.innerHTML = '<p class="empty">No merchants yet — classify or tag transactions.</p>';
+    return;
+  }
+  const totalSpend = rows.reduce((a, d) => a + d.spend, 0) || 1;
+  el.innerHTML = `
+    <table class="cat-table">
+      <thead><tr>
+        <th style="width:28px"></th><th>Merchant</th><th class="num">Txns</th>
+        <th class="num">Spend</th>
+        <th style="width:24%" title="Share of total spend">Share</th>
+      </tr></thead>
+      <tbody>${rows.map((d, i) => {
+        const pct = ((d.spend / totalSpend) * 100).toFixed(1);
+        return `
+        <tr class="drill-row" data-i="${i}" data-merchant="${esc(d.merchant)}">
+          <td><span class="chev">▶</span></td>
+          <td><span class="dot" style="background:${esc(d.color)}"></span>${esc(d.merchant)}</td>
+          <td class="num">${d.n}</td>
+          <td class="num neg">${fmtMoney(-d.spend)}</td>
+          <td><div class="share-split">
+            <div class="share-side neg"><span class="share-pct">${pct}%</span><div class="share-bar"><i style="width:${pct}%;background:${esc(d.color)}"></i></div></div>
+            <div class="share-zero"></div>
+            <div class="share-side pos"><div class="share-bar"><i style="width:0"></i></div><span class="share-pct"></span></div>
+          </div></td>
+        </tr>
+        <tr class="detail-row" id="merch-det-${i}" style="display:none">
+          <td colspan="5"><div class="detail-wrap" data-merchant="${esc(d.merchant)}"></div></td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+  el.querySelectorAll('.drill-row').forEach(row => {
+    row.addEventListener('click', async () => {
+      const detail = el.querySelector('#merch-det-' + row.dataset.i);
+      const wrap = detail.querySelector('.detail-wrap');
+      const merchant = row.dataset.merchant;
+      if (detail.style.display !== 'none') {
+        detail.style.display = 'none'; row.classList.remove('open');
+        return;
+      }
+      detail.style.display = ''; row.classList.add('open');
+      if (!wrap.dataset.loaded) {
+        wrap.innerHTML = '<p class="empty" style="padding:14px">Loading…</p>';
+        const entry = rows.find(d => d.merchant === merchant) || {};
+        wrap.innerHTML = `
+          <div class="detail-head">
+            <span>${esc(merchant)}</span>
+            <span>
+              <input type="text" class="merch-rename" maxlength="100" value="${esc(merchant)}" aria-label="New merchant name" style="width:160px">
+              <button class="primary" data-act="rename" style="margin-left:6px">Rename</button>
+              <input type="color" class="merch-color" value="${esc(entry.color || '#888888')}" title="Change color" aria-label="Change merchant color" style="width:32px;height:24px;padding:0;border:0;background:none;cursor:pointer;vertical-align:middle;margin-left:10px">
+              <button class="rule-del" data-act="remove" style="margin-left:8px" title="Remove this merchant">×</button>
+            </span>
+          </div>
+          <div class="merch-detail-txns" style="min-height:80px"><p class="empty" style="padding:14px">Loading…</p></div>`;
+        const txnBox = wrap.querySelector('.merch-detail-txns');
+        try {
+          const txns = await api('/api/transactions?merchant=' +
+            encodeURIComponent(merchant) + '&limit=500');
+          txnBox._txns = txns;
+          txnBox._sortState = { key: 'date', dir: 'desc' };
+          txnBox._editable = false;
+          renderTxnTable(txnBox);
+          txnBox._detailRender = null;
+        } catch (e) {
+          txnBox.innerHTML = '<p class="empty" style="padding:14px">' + esc(e.message) + '</p>';
+        }
+        // Toolbar actions.
+        wrap.querySelector('[data-act="rename"]').addEventListener('click', async () => {
+          const input = wrap.querySelector('.merch-rename');
+          const newName = (input.value || '').trim();
+          if (!newName || newName === merchant) return;
+          try {
+            await api('/api/merchants/rename', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ old: merchant, new: newName }),
+            });
+            toast('Renamed to ' + newName);
+            if (window.onDataChanged) setTimeout(onDataChanged, 300);
+          } catch (e) { toast('Rename failed: ' + e.message, 6000); }
+        });
+        wrap.querySelector('.merch-color').addEventListener('change', async (e) => {
+          const color = e.target.value;
+          try {
+            await api('/api/merchants/color', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ merchant, color }),
+            });
+            // Update the row's dot + share bar in place (no re-render,
+            // so the open detail stays open).
+            const dot = row.querySelector('.dot');
+            if (dot) dot.style.background = color;
+            const bar = row.querySelector('.share-bar i');
+            if (bar) bar.style.background = color;
+            toast('Color updated');
+          } catch (e) { toast('Color failed: ' + e.message, 6000); }
+        });
+        wrap.querySelector('[data-act="remove"]').addEventListener('click', async () => {
+          if (!confirm('Remove merchant "' + merchant + '"? This deletes its rules and per-transaction overrides — rows revert to untagged.')) return;
+          try {
+            await api('/api/merchants/remove', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ merchant }),
+            });
+            toast('Removed ' + merchant);
+            if (window.onDataChanged) setTimeout(onDataChanged, 300);
+          } catch (e) { toast('Remove failed: ' + e.message, 6000); }
+        });
+        wrap.dataset.loaded = '1';
+      }
+    });
+  });
+}
+
 async function renderAll() {
-  const [summary, monthly, years, cats, accounts, sankeyFlows, sankeyMerchants] =
+  const [summary, monthly, years, cats, accounts, sankeyFlows, sankeyMerchants, merchData] =
     await Promise.all([
     api('/api/summary'),
     api('/api/monthly'),
@@ -557,6 +691,7 @@ async function renderAll() {
     api('/api/accounts'),
     api('/api/sankey'),
     api('/api/sankey-merchants'),
+    api('/api/merchants/distinct'),
   ]);
 
   $id('emptyHint').style.display = summary.n_transactions ? 'none' : 'block';
@@ -594,6 +729,9 @@ async function renderAll() {
 
   // Category totals with drill-down.
   renderCategoryTable($id('catTable'), cats, {});
+
+  // Distinct merchants with drill-down.
+  renderMerchantTable(merchData);
 
   // Sankey: each account → its categories → its merchants (all
   // time), filtered client-side by the account/category pickers

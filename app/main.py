@@ -66,6 +66,7 @@ async def lifespan(_: FastAPI):
         merchants.ensure_rule_position(con)
         merchants.ensure_rule_scope(con)
         con.execute(merchants.CREATE_MERCHANT_OVERRIDES_SQL)
+        con.execute(merchants.CREATE_MERCHANT_COLORS_SQL)
         con.execute(ingest.CREATE_EFFECTIVE_VIEW_SQL)
         # One-time migration: move pre-override categories (rule/LLM/
         # manual) out of the imported rows into category_overrides.
@@ -505,14 +506,16 @@ def classify():
 
 @app.get("/api/transactions")
 def transactions(year: str | None = None, month: str | None = None,
-                 category: str | None = None, limit: int = 1000):
+                 category: str | None = None, merchant: str | None = None,
+                 limit: int = 1000):
     """Individual transactions for a date range (newest first),
-    optionally one normalized category. Soft-deleted rows are excluded;
-    each row carries ``category`` (effective, override-aware) and
-    ``original_category`` (the CSV import's value, untouched)."""
+    optionally one normalized category or one effective merchant.
+    Soft-deleted rows are excluded; each row carries ``category``
+    (effective, override-aware) and ``original_category`` (the CSV
+    import's value, untouched)."""
     con = get_con()
     try:
-        return analytics.transactions(con, year, month, category, limit)
+        return analytics.transactions(con, year, month, category, merchant, limit)
     finally:
         con.close()
 
@@ -772,6 +775,72 @@ def delete_merchant_rule(rule_id: int):
         con.close()
 
 
+class MerchantRenameBody(BaseModel):
+    old: str
+    new: str
+
+
+class MerchantRemoveBody(BaseModel):
+    merchant: str
+
+
+class MerchantColorBody(BaseModel):
+    merchant: str
+    color: str
+
+
+@app.get("/api/merchants/distinct")
+def distinct_merchants_route(limit: int = 1000):
+    """All distinct effective merchants with aggregate stats and colors."""
+    con = get_con()
+    try:
+        return {"merchants": merchants.distinct_merchants(con, limit=limit)}
+    finally:
+        con.close()
+
+
+@app.post("/api/merchants/rename")
+def rename_merchant_route(body: MerchantRenameBody):
+    con = get_con()
+    try:
+        try:
+            result = merchants.rename_merchant(con, body.old, body.new)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        con.commit()
+        return result
+    finally:
+        con.close()
+
+
+@app.post("/api/merchants/remove")
+def remove_merchant_route(body: MerchantRemoveBody):
+    con = get_con()
+    try:
+        try:
+            result = merchants.remove_merchant(con, body.merchant)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        con.commit()
+        return result
+    finally:
+        con.close()
+
+
+@app.post("/api/merchants/color")
+def set_merchant_color_route(body: MerchantColorBody):
+    con = get_con()
+    try:
+        try:
+            color = merchants.set_color(con, body.merchant, body.color)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        con.commit()
+        return {"merchant": body.merchant, "color": color}
+    finally:
+        con.close()
+
+
 @app.get("/api/merchants")
 def merchant_rows_route(limit: int = 200,
                         include_uncategorized: bool = False,
@@ -830,7 +899,10 @@ def classify_merchants(limit: int = 200, set_by: str = "uncategorized"):
         rows = analytics.merchant_rows(con, limit=limit,
                                        include_uncategorized=True,
                                        set_by=set_by)
-        targets = rows["rows"]
+        # Rows the LLM pass already declined are never re-sent — they
+        # stay visible in the list but out of the classify targets.
+        already_skipped = merchants.skipped_ids(con)
+        targets = [r for r in rows["rows"] if r["id"] not in already_skipped]
         if not targets:
             return {"classified": 0, "skipped": 0}
         descriptions = [r["description"] or "" for r in targets]
@@ -847,6 +919,7 @@ def classify_merchants(limit: int = 200, set_by: str = "uncategorized"):
                 merchants.set_merchant(con, r["id"], guess, source="llm")
                 classified += 1
             else:
+                merchants.mark_skipped(con, [r["id"]])
                 skipped += 1
         return {"classified": classified, "skipped": skipped}
     finally:
