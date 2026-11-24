@@ -281,9 +281,11 @@ function renderOverrides() {
   const qre = q ? txnSearchRegex(q) : null;
   renderTxnChart(rows, q);
   const noLlm = !window.LLM_CONFIGURED;
-  $id('classifyBtn').disabled = !ovPendingTotal || noLlm;
-  $id('classifyBtn').title = noLlm
-    ? 'LLM not configured — set both MERCURY_LLM_ENDPOINT and MERCURY_LLM_MODEL, then restart the server' : '';
+  $id('classifyBtn').disabled = classifyBusy() || !ovPendingTotal || noLlm;
+  $id('classifyBtn').title = classifyBusy()
+    ? 'Classifying…'
+    : (noLlm
+      ? 'LLM not configured — set both MERCURY_LLM_ENDPOINT and MERCURY_LLM_MODEL, then restart the server' : '');
   // Shown-count moved to the badge next to the h2. The hint (ui.js
   // txnSearchHint, shared with the Month page) no longer echoes the
   // search term — while a search is active the badge already reports
@@ -446,9 +448,11 @@ function renderMerchants() {
   const qre = q ? txnSearchRegex(q) : null;
   const noLlm = !window.LLM_CONFIGURED;
   renderTxnChart(rows, q);
-  $id('classifyBtn').disabled = !mrPendingTotal || noLlm;
-  $id('classifyBtn').title = noLlm
-    ? 'LLM not configured — set both MERCURY_LLM_ENDPOINT and MERCURY_LLM_MODEL, then restart the server' : '';
+  $id('classifyBtn').disabled = classifyBusy() || !mrPendingTotal || noLlm;
+  $id('classifyBtn').title = classifyBusy()
+    ? 'Classifying…'
+    : (noLlm
+      ? 'LLM not configured — set both MERCURY_LLM_ENDPOINT and MERCURY_LLM_MODEL, then restart the server' : '');
   $id('ovShownCount').textContent = (mrTotal > rows.length
     ? rows.length + ' of ' + mrTotal + ' shown'
     : rows.length + ' shown');
@@ -582,6 +586,7 @@ async function runClassify() {
 
 (async function init() {
   renderChrome('transactions');
+  startClassifyStatusPolling();
   const [cats, health, accounts] = await Promise.all([
     api('/api/standard-categories'),
     api('/api/health'),
