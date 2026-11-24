@@ -1001,7 +1001,15 @@ function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet',
     .filter(c => catSide[c].debit > 0)
     .sort((a, b) => catSide[b].debit - catSide[a].debit || a.localeCompare(b));
   const merchantKeys = Object.keys(total).filter(k => isMerchKey(k));
-  const merchLabel = k => String(k).slice(1);
+  // The merchant catch-all bucket renders the same text as the
+  // category catch-all ("All other"), but the plugin keys nodes by
+  // rendered label — two nodes with the same label merge into one.
+  // An invisible zero-width suffix keeps them distinct while both
+  // display "All other".
+  const merchLabel = k => {
+    const l = String(k).slice(1);
+    return l === 'All other' ? l + '\u200b' : l;
+  };
   const colItems = [
     ...creditCats.map(c => [c, 0]),
     ...acctKeys
@@ -1031,7 +1039,7 @@ function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet',
   wrap.style.height = Math.max(280, Math.min(640, maxCol * 48 + 48)) + 'px';
   const nodeIndex = new Map(labels.map((l, i) => [l, i]));
   const render = x => isAcctKey(x) ? acctLabel(x)
-                   : isMerchKey(x) ? String(x).slice(1) : x;
+                   : isMerchKey(x) ? merchLabel(x) : x;
   const labelTotal = {};
   for (const f of flows)
     labelTotal[render(f.to)] = (labelTotal[render(f.to)] || 0) + f.flow;
