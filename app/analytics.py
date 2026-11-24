@@ -11,7 +11,7 @@ from __future__ import annotations
 import duckdb
 from typing import Any
 
-from . import rules, merchants
+from . import imports, rules, merchants
 
 # Amount sign convention: negative = money out (spend), positive = money in.
 
@@ -247,7 +247,8 @@ def accounts(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
         GROUP BY 1, 2
         ORDER BY 1, 2
     """).fetchall()
-    return [{"source": s, "account": a, "n": n, "net": round(net, 2)}
+    return [{"source": s, "account": a, "n": n, "net": round(net, 2),
+             "color": imports.account_color(con, a, s)}
             for s, a, n, net in rows]
 
 
