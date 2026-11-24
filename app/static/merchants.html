@@ -46,6 +46,16 @@
 
   <section class="section">
     <div class="section-head">
+      <h2>Custom merchant rules</h2>
+      <span class="badge" id="mrRulesCount" aria-live="polite"></span>
+    </div>
+    <div class="panel" id="mrRulesPanel">
+      <div id="mrRulesList" style="min-height:120px"></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
       <h2>Match merchants</h2>
       <span class="badge" id="mrShownCount" aria-live="polite"></span>
       <button class="primary" id="mrClassifyBtn" onclick="runMerchantClassify()">Classify unknown (LLM)</button>
@@ -423,7 +433,7 @@ async function renderSankeyPage() {
   skPickers();
 }
 
-window.onDataChanged = async function () { await renderSankeyPage(); await loadMerchants(); };
+window.onDataChanged = async function () { await renderSankeyPage(); await loadMerchants(); await loadMerchantRules(); };
 
 
 /* ------------------------------ Match merchants panel */
@@ -604,6 +614,64 @@ async function runMerchantClassify() {
   if (window.onDataChanged) setTimeout(onDataChanged, 400);
 }
 
+/* ------------------------------ Custom merchant rules panel */
+/* Lists every rule from GET /api/merchants/rules (pattern, merchant,
+ * scope, enabled, match counts) with delete. Mirrors the Categories
+ * page's rules panel; the "enabled" column is display-only (the API
+ * has no enable/disable endpoint). */
+let mrRulesSeq = 0;
+
+async function loadMerchantRules() {
+  const seq = ++mrRulesSeq;
+  let data;
+  try {
+    data = await api('/api/merchants/rules');
+  } catch (e) {
+    if (seq === mrRulesSeq) toast('Failed to load rules: ' + e.message, 8000);
+    return;
+  }
+  if (seq !== mrRulesSeq) return;
+  renderMerchantRules(data.rules || []);
+}
+
+function renderMerchantRules(rules) {
+  const el = $id('mrRulesList');
+  $id('mrRulesCount').textContent = rules.length
+    ? rules.length + ' rule' + (rules.length > 1 ? 's' : '') : '';
+  if (!rules.length) {
+    el.innerHTML = '<p class="empty" style="padding:14px">No rules yet — add one in Match merchants.</p>';
+    return;
+  }
+  el.innerHTML = `
+    <table>
+      <thead><tr>
+        <th>Pattern</th><th>Merchant</th>
+        <th title="Where the rule applies — empty means every source and account">Scope</th>
+        <th>Enabled</th><th class="num">Matches</th><th style="width:40px"></th>
+      </tr></thead>
+      <tbody>${rules.map(r => `
+        <tr>
+          <td class="desc" title="${esc(r.pattern)}">${esc(r.pattern)}</td>
+          <td>${esc(r.merchant)}</td>
+          <td title="Applies to: ${esc([r.source, r.account].filter(Boolean).join(' · ') || 'all sources and accounts')}">${_scopeLabel(r)}</td>
+          <td><span class="badge ${r.enabled ? 'src-rule' : ''}">${r.enabled ? 'Enabled' : 'Disabled'}</span></td>
+          <td class="num">${r.matches}</td>
+          <td class="num"><button class="rule-del" title="Delete rule" onclick="deleteMerchantRule(${r.id})">×</button></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+async function deleteMerchantRule(id) {
+  try {
+    await api('/api/merchants/rules/' + id, { method: 'DELETE' });
+    toast('Rule deleted');
+    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  } catch (err) {
+    toast('Delete failed: ' + err.message, 5000);
+  }
+}
+
 $id('mrSetBySel').innerHTML = MR_SET_BY_OPTIONS.map(([v, l]) =>
   `<option value="${v}">${l}</option>`).join('');
 wireTxnSearchBar($id('mrSearch'), $id('mrSetBySel'),
@@ -629,7 +697,7 @@ wireTxnSearchBar($id('mrSearch'), $id('mrSetBySel'),
     $id('mrScopeAccount').innerHTML =
       _scopeOptions(_scopeAccounts(accounts, ''), 'All accounts');
     syncMrRuleControls();
-    await Promise.all([renderSankeyPage(), loadMerchants()]);
+    await Promise.all([renderSankeyPage(), loadMerchants(), loadMerchantRules()]);
   } catch (e) {
     toast('Failed to load: ' + e.message, 8000);
   }
