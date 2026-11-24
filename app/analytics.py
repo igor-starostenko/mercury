@@ -622,6 +622,7 @@ def transactions(con: duckdb.DuckDBPyConnection,
                  year: str | None = None,
                  month: str | None = None,
                  category: str | None = None,
+                 merchant: str | None = None,
                  limit: int = 1000) -> list[dict[str, Any]]:
     """Individual transactions for a date range (newest first).
 
@@ -643,6 +644,9 @@ def transactions(con: duckdb.DuckDBPyConnection,
     if category:
         conds.append("COALESCE(v.category, 'Uncategorized') = ?")
         params.append(category)
+    if merchant:
+        conds.append("v.merchant = ?")
+        params.append(merchant)
     # The view carries the effective category (override + rule layer);
     # transactions is joined only to expose the untouched CSV original.
     # Ignored rows are NOT filtered out here — they stay visible, with

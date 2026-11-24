@@ -26,6 +26,7 @@ def _conn(tmp_path, name="merchants.db"):
     merchants.ensure_rule_position(con)
     merchants.ensure_rule_scope(con)
     con.execute(merchants.CREATE_MERCHANT_OVERRIDES_SQL)
+    con.execute(merchants.CREATE_MERCHANT_COLORS_SQL)
     con.execute(ingest.CREATE_EFFECTIVE_VIEW_SQL)
     return con
 
@@ -139,6 +140,84 @@ def test_clear_override(tmp_path):
     _seed(con, [("Apple Card", "Checking", "2026-01-10", -12.0, "WALMART #123", 1)])
     merchants.set_merchant(con, 100, "Walmart", source="manual")
     merchants.set_merchant(con, 100, None)
+    r = con.execute(
+        "SELECT merchant FROM effective_transactions WHERE id = 100").fetchone()
+    assert r[0] is None
+
+
+def test_distinct_merchants_stats_and_colors(tmp_path):
+    con = _conn(tmp_path)
+    _seed(con, [("Apple Card", "Checking", "2026-01-10", -12.0, "WALMART #1", 1),
+                ("Apple Card", "Checking", "2026-01-11", -5.0, "WALMART #2", 1),
+                ("Apple Card", "Checking", "2026-01-12", 100.0, "UBER TRIP", 1)])
+    merchants.set_merchant(con, 100, "Walmart", source="manual")
+    merchants.set_merchant(con, 101, "Walmart", source="manual")
+    merchants.set_merchant(con, 102, "Uber", source="manual")
+    out = merchants.distinct_merchants(con)
+    by_name = {d["merchant"]: d for d in out}
+    assert set(by_name) == {"Walmart", "Uber"}
+    w = by_name["Walmart"]
+    assert w["n"] == 2
+    assert w["spend"] == 17.0
+    assert w["net"] == -17.0
+    assert w["color"].startswith("#") and len(w["color"]) == 7
+    # color is stable across calls (persisted, not re-rolled)
+    colors_first = {d["merchant"]: d["color"] for d in merchants.distinct_merchants(con)}
+    colors_second = {d["merchant"]: d["color"] for d in merchants.distinct_merchants(con)}
+    assert colors_first == colors_second == {"Walmart": w["color"],
+                                             "Uber": by_name["Uber"]["color"]}
+    # sorted by spend desc
+    assert out[0]["merchant"] == "Walmart"
+
+
+def test_set_color_roundtrip_and_validation(tmp_path):
+    con = _conn(tmp_path)
+    _seed(con, [("Apple Card", "Checking", "2026-01-10", -12.0, "WALMART #1", 1)])
+    merchants.set_merchant(con, 100, "Walmart", source="manual")
+    color = merchants.set_color(con, "Walmart", "#112233")
+    assert color == "#112233"
+    assert merchants.load_colors(con)["Walmart"] == "#112233"
+    with pytest.raises(ValueError):
+        merchants.set_color(con, "Walmart", "not-a-color")
+    with pytest.raises(ValueError):
+        merchants.set_color(con, "", "#112233")
+
+
+def test_rename_merchant_retags_overrides_rules_and_color(tmp_path):
+    con = _conn(tmp_path)
+    _seed(con, [("Apple Card", "Checking", "2026-01-10", -12.0, "WALMART #1", 1),
+                ("Apple Card", "Checking", "2026-01-11", -5.0, "UBER TRIP", 1)])
+    merchants.set_merchant(con, 100, "Walmart", source="manual")
+    merchants.create_rule(con, "uber", "Uber")
+    merchants.set_color(con, "Uber", "#123456")
+    result = merchants.rename_merchant(con, "Uber", "UberEats")
+    assert result["rules"] == 1
+    assert result["overrides"] == 0
+    rules = merchants.load_rules(con, enabled_only=False)
+    assert [r.merchant for r in rules] == ["UberEats"]
+    # color inherits the old entry
+    assert merchants.load_colors(con).get("UberEats") == "#123456"
+    assert merchants.load_colors(con).get("Uber") is None
+    # rename to an existing merchant: target color wins, old is dropped
+    merchants.set_merchant(con, 101, "Walmart", source="manual")
+    merchants.set_color(con, "Walmart", "#abcdef")
+    merchants.rename_merchant(con, "UberEats", "Walmart")
+    assert merchants.load_colors(con)["Walmart"] == "#abcdef"
+    assert merchants.load_colors(con).get("UberEats") is None
+
+
+def test_remove_merchant_drops_overrides_rules_color(tmp_path):
+    con = _conn(tmp_path)
+    _seed(con, [("Apple Card", "Checking", "2026-01-10", -12.0, "WALMART #1", 1)])
+    merchants.set_merchant(con, 100, "Walmart", source="manual")
+    merchants.create_rule(con, "walmart", "Walmart")
+    merchants.set_color(con, "Walmart", "#123456")
+    result = merchants.remove_merchant(con, "Walmart")
+    assert result["overrides"] == 1
+    assert result["rules"] == 1
+    assert result["color"] == 1
+    assert merchants.load_rules(con, enabled_only=False) == []
+    assert merchants.load_colors(con) == {}
     r = con.execute(
         "SELECT merchant FROM effective_transactions WHERE id = 100").fetchone()
     assert r[0] is None
