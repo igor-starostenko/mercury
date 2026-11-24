@@ -602,10 +602,17 @@ function applyClassifyButtonState() {
   }
 }
 
+/* Poll the server status while the tab is visible and the current view has
+ * pending classify work. shouldPoll: () => boolean — evaluated every tick, so
+ * switching tabs or the pending counts changing takes effect on the next
+ * tick. Skipped entirely (no fetch) when the page shouldn't be tracking a
+ * run — e.g. merchants pending but the categories tab is active. */
 let _classifyPollTimer = null;
-function startClassifyStatusPolling() {
+function startClassifyStatusPolling(shouldPoll) {
   if (_classifyPollTimer) return;
   const tick = async () => {
+    if (document.visibilityState !== 'visible') return;
+    if (typeof shouldPoll === 'function' && !shouldPoll()) return;
     try {
       const res = await api('/api/classify/status');
       const was = window._classifyServerRunning;
@@ -619,6 +626,9 @@ function startClassifyStatusPolling() {
   };
   tick();
   _classifyPollTimer = setInterval(tick, 2000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') tick();
+  });
 }
 
 async function withBusyButton(id, busyText, fn) {
