@@ -327,8 +327,9 @@ def sankey_merchants_flow(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]
 
 
 def unknown_categories(con: duckdb.DuckDBPyConnection,
-                       limit: int = 200) -> list[dict[str, Any]]:
-    rows = con.execute("""
+                       limit: int | None = 200) -> list[dict[str, Any]]:
+    limit_sql = "LIMIT ?" if limit is not None else ""
+    rows = con.execute(f"""
         SELECT v.id, v.source, v.account, CAST(v.txn_date AS VARCHAR), v.amount,
                v.description, v.raw_category
         FROM effective_transactions AS v
@@ -336,8 +337,8 @@ def unknown_categories(con: duckdb.DuckDBPyConnection,
         WHERE (v.category IS NULL OR v.category = '' OR v.category = 'Uncategorized')
           AND COALESCE(t.llm_skipped, false) = false
         ORDER BY v.txn_date DESC
-        LIMIT ?
-    """, [limit]).fetchall()
+        {limit_sql}
+    """, [limit] if limit is not None else []).fetchall()
     return [
         {"id": r[0], "source": r[1], "account": r[2], "date": r[3],
          "amount": r[4], "description": r[5], "raw_category": r[6]}
@@ -750,7 +751,7 @@ def unknown_merchants(con: duckdb.DuckDBPyConnection,
 
 
 def merchant_rows(con: duckdb.DuckDBPyConnection,
-                  limit: int = 200,
+                  limit: int | None = 200,
                   include_uncategorized: bool = False,
                   set_by: str = "all",
                   sort_by: str = "date",
@@ -832,6 +833,8 @@ def merchant_rows(con: duckdb.DuckDBPyConnection,
               AND COALESCE(t.llm_skipped, false) = false
         """).fetchone()
 
+    limit_sql = "LIMIT ?" if limit is not None else ""
+
     rows = con.execute(f"""
         SELECT v.id, v.source, v.account, CAST(v.txn_date AS VARCHAR),
                v.amount, v.description, v.merchant,
@@ -842,8 +845,8 @@ def merchant_rows(con: duckdb.DuckDBPyConnection,
         JOIN transactions AS t ON t.id = v.id
         WHERE {where_sql}
         ORDER BY {_MERCHANT_SORTS[sort_by]} {sort_dir}, v.id ASC
-        LIMIT ?
-    """, [*params, int(limit)]).fetchall()
+        {limit_sql}
+    """, [*params] + ([int(limit)] if limit is not None else [])).fetchall()
 
     enabled = merchants.load_rules(con)
     out = []

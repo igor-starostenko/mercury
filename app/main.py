@@ -493,7 +493,7 @@ def classify():
                    "and MERCURY_LLM_MODEL and restart the server")
     con = get_con()
     try:
-        unknown = analytics.unknown_categories(con, limit=100000)
+        unknown = analytics.unknown_categories(con, limit=None)
         if not unknown:
             return {"classified": 0, "of": 0}
         # Classify each distinct description once; identical descriptions
@@ -901,29 +901,36 @@ def set_merchant_overrides(body: MerchantSetBody):
 
 
 @app.post("/api/merchants/classify")
-def classify_merchants(limit: int = 200, set_by: str = "uncategorized"):
+def classify_merchants(set_by: str = "uncategorized"):
     """LLM-classify the transactions that have no effective merchant.
 
-    Returns the number classified and the number skipped (empty
-    descriptions, no identifiable merchant, or endpoint failure)."""
+    All unknown transactions are considered (no 200-row cap). Distinct
+    descriptions are classified once each (batches of 25) and the
+    resulting merchant is applied to every transaction sharing that
+    description. Returns the number classified and the number skipped
+    (empty descriptions, no identifiable merchant, or endpoint failure)."""
     con = get_con()
     try:
-        rows = analytics.merchant_rows(con, limit=limit,
+        rows = analytics.merchant_rows(con, limit=None,
                                        include_uncategorized=True,
                                        set_by=set_by)
         targets = rows["rows"]
         if not targets:
             return {"classified": 0, "skipped": 0}
-        descriptions = [r["description"] or "" for r in targets]
+        # Classify each distinct description once; identical descriptions
+        # share one LLM result. Order-preserving dict keeps first-seen order.
+        unique_descs = list(dict.fromkeys(r["description"] or "" for r in targets))
         try:
-            guessed = llm.classify_merchants_batch_llm(descriptions)
+            guessed = llm.classify_merchants_batch_llm(unique_descs)
         except llm.LLMNotConfigured as e:
             raise HTTPException(status_code=503, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=502, detail=str(e))
+        guess_by_desc = dict(zip(unique_descs, guessed))
         classified = 0
         skipped = 0
-        for r, guess in zip(targets, guessed):
+        for r in targets:
+            guess = guess_by_desc.get(r["description"] or "")
             if guess:
                 merchants.set_merchant(con, r["id"], guess, source="llm")
                 classified += 1
@@ -932,7 +939,9 @@ def classify_merchants(limit: int = 200, set_by: str = "uncategorized"):
                             [r["id"]])
                 skipped += 1
         con.commit()
-        return {"classified": classified, "skipped": skipped}
+        return {"classified": classified, "skipped": skipped,
+                "of": len(targets),
+                "unique_descriptions": len(unique_descs)}
     finally:
         con.close()
 
