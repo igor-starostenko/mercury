@@ -28,6 +28,7 @@
   <section class="section">
     <div class="section-head">
       <h2>Find transactions</h2>
+      <span class="badge" id="ovShownCount" aria-live="polite"></span>
       <!-- Two-mode tab: Set Category (rule builder + per-row category
            select) and Match Merchant (rule builder + per-row merchant
            input). The search bar is the same in both tabs. -->
@@ -36,7 +37,6 @@
           <button role="tab" id="tabCat" class="active" aria-selected="true" onclick="switchTxnTab('category')">Set Category</button>
           <button role="tab" id="tabMerchant" aria-selected="false" onclick="switchTxnTab('merchant')">Match Merchant</button>
         </div>
-        <span class="badge" id="ovShownCount" aria-live="polite"></span>
         <button class="primary" id="classifyBtn" onclick="runClassify()">Classify unknown (LLM)</button>
         <!-- Shared hint (ui.js txnSearchHint): empty unless a non-default
              sort direction or an extra note is active. -->
