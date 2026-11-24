@@ -114,6 +114,7 @@ const SK_DEFAULT_MERCHANTS = 15; // first-visit default: top 15 by debit
 let _skFlows = null; // /api/sankey payload (this year)
 let _skMerchants = null; // /api/sankey-merchants payload (this year)
 let _acctColors = null; // raw account key (source + '\u0000' + account) → color
+let _merchColors = null; // merchant name → configured color
 
 // Same (source, account) identity makeSankeyChart uses for node keys —
 // two banks can share an account name ("Checking").
@@ -504,13 +505,13 @@ function renderSankeyChart() {
     !(_skFlows || []).length ? 'no transactions yet'
       : !a.size ? 'pick at least one account'
       : 'pick at least one spend category or "All other"',
-    _acctColors);
+    _acctColors, _merchColors);
 }
 
 window.onDataChanged = () => renderYear($id('yearSel').value);
 
 async function renderYear(year) {
-  const [md, cats, allYears, sum, all, accts, skFlows, skMerchants] =
+  const [md, cats, allYears, sum, all, accts, skFlows, skMerchants, merchDistinct] =
     await Promise.all([
     api('/api/monthly?year=' + encodeURIComponent(year)),
     api('/api/categories?year=' + encodeURIComponent(year)),
@@ -520,8 +521,10 @@ async function renderYear(year) {
     api('/api/accounts'),
     api('/api/sankey?year=' + encodeURIComponent(year)),
     api('/api/sankey-merchants?year=' + encodeURIComponent(year)),
+    api('/api/merchants/distinct'),
   ]);
   _acctColors = new Map(accts.map(a => [a.source + '\u0000' + a.account, a.color]));
+  _merchColors = new Map(((merchDistinct && merchDistinct.merchants) || []).map(d => [d.merchant, d.color]));
   _skFlows = skFlows || [];
   _skMerchants = skMerchants || [];
 

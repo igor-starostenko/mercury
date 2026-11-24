@@ -959,9 +959,12 @@ function makeFlowChart(canvas, cfg) {
  * when the pickers hid everything).
  * accountColors: optional Map keyed by raw account key (source + '\u0000'
  * + account) → CSS color; an account endpoint renders in its color
- * (the theme-neutral fill when absent). */
+ * (the theme-neutral fill when absent).
+ * merchantColors: optional Map keyed by merchant name → CSS color;
+ * a merchant endpoint renders in its configured color (the theme accent
+ * when absent). */
 function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet',
-                        accountColors = null) {
+                        accountColors = null, merchantColors = null) {
   const existing = Chart.getChart(canvas);
   if (existing) existing.destroy();
   const wrap = canvas.parentElement;
@@ -1084,7 +1087,8 @@ function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet',
   const rawKeyByLabel = new Map(acctKeys.map(k => [acctLabel(k), k]));
   const nodeColor = x => renderedAccts.has(String(x))
     ? (accountColors && accountColors.get(rawKeyByLabel.get(String(x)))) || acctColor
-    : renderedMerchants.has(String(x)) ? merchColor
+    : renderedMerchants.has(String(x))
+      ? (merchantColors && merchantColors.get(String(x).replace('\u200b', ''))) || merchColor
     : catColor(String(x));
 
   return new Chart(canvas, {
