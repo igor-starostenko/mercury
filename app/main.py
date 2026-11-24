@@ -495,14 +495,19 @@ def classify():
         unknown = analytics.unknown_categories(con, limit=100000)
         if not unknown:
             return {"classified": 0, "of": 0}
-        results = llm.classify_batch_llm([u["description"] for u in unknown])
+        # Classify each distinct description once; identical descriptions
+        # share one LLM result. Order-preserving dict keeps first-seen order.
+        unique_descs = list(dict.fromkeys(u["description"] for u in unknown))
+        results = llm.classify_batch_llm(unique_descs)
+        cat_by_desc = dict(zip(unique_descs, results))
         updated = 0
-        for u, cat in zip(unknown, results):
+        for u in unknown:
+            cat = cat_by_desc.get(u["description"])
             if cat:
                 analytics.set_category(con, u["id"], cat, source="llm")
                 updated += 1
         con.commit()
-        return {"classified": updated, "of": len(unknown)}
+        return {"classified": updated, "of": len(unknown), "unique_descriptions": len(unique_descs)}
     finally:
         con.close()
 
