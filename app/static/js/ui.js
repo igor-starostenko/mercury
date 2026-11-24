@@ -920,9 +920,10 @@ function makeFlowChart(canvas, cfg) {
   return chart;
 }
 
-/* Overview sankey: 3-column flow — NET-POSITIVE (income) categories
+/* Overview sankey: 4-column flow — NET-POSITIVE (income) categories
  * on the LEFT, accounts in the MIDDLE, NET-NEGATIVE (spend)
- * categories on the RIGHT: income flows in, passes through the
+ * categories on the RIGHT, merchants (downstream of categories) on
+ * the FAR RIGHT: income flows in, passes through the
  * accounts, and lands in spend categories. Edge orientation encodes
  * the side: credit flows run category → account, debit flows run
  * account → category. Classification happens upstream (index.html
@@ -931,24 +932,22 @@ function makeFlowChart(canvas, cfg) {
  * not shown at all. Ignored rows never reach the endpoint (server-side,
  * like every aggregate).
  *
- * Column placement is PINNED explicitly (options.column): the plugin
- * reads it per node and skips graph-depth assignment for pinned
- * nodes. This is deliberate — in the flipped graph an account with
- * no credit inflow (Apple Card in the live data) is a pure source,
- * and graph topology would dump it in the LEFT column with the
- * income categories. Pinning guarantees the 3-column structure
- * regardless of topology: credit = 0, accounts = 1, debit = 2.
- * nodeAlign:'start' packs each column from the top instead of
- * justifying it.
+ * Column placement is PINNED explicitly (node x = column / 3): the
+ * topological layout can't shove an account into the wrong column.
+ * This is deliberate — in the flipped graph an account with no
+ * credit inflow (Apple Card in the live data) is a pure source, and
+ * graph topology would dump it in the LEFT column with the income
+ * categories. Pinning guarantees the 4-column structure regardless
+ * of topology: credit = 0, accounts = 1, debit = 2, merchants = 3.
+ * y is left to the layout (it packs each column from the top).
  *
  * Node order: per column, flow total desc (left credit categories by
  * credit, middle accounts by total, right debit categories by
- * debit) — the layout keeps first-appearance order, so the widest
- * bands sit at the top.
- * Node colors follow the band ends — the plugin takes each node's
- * fill from the flow element's resolved colorFrom/colorTo, so BOTH
- * are scriptable here: a category endpoint (either side) carries its
- * palette color, an account endpoint the theme-neutral fill.
+ * debit, merchants by total) — the layout keeps first-appearance
+ * order, so the widest bands sit at the top.
+ * Node colors: a category endpoint (either side) carries its palette
+ * color, an account endpoint the theme-neutral fill, a merchant
+ * endpoint the accent color.
  * flows: [{from, to, flow}] (flow > 0) where from/to are node
  * identities: plain category names or account keys
  * (source + '\u0000' + account, never written into HTML — the
@@ -960,11 +959,14 @@ function makeFlowChart(canvas, cfg) {
  * accountColors: optional Map keyed by raw account key (source + '\u0000'
  * + account) → CSS color; an account endpoint renders in its color
  * (the theme-neutral fill when absent). */
-function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet',
+function makeSankeyChart(el, flows, emptyMsg = 'no transactions yet',
                         accountColors = null) {
-  const existing = Chart.getChart(canvas);
-  if (existing) existing.destroy();
-  const wrap = canvas.parentElement;
+  // Rendered by Plotly (vendored plotly.min.js) into a div — the
+  // chartjs-chart-sankey plugin is gone. Purge the previous plot
+  // before re-rendering (re-renders reuse the same element).
+  try { Plotly.purge(el); } catch (e) { /* not rendered yet */ }
+  el.innerHTML = '';
+  const wrap = el.parentElement;
   const hint = wrap.querySelector('.chart-empty');
   if (hint) hint.remove();
   if (!flows.length) { // no data: muted hint in a compact wrap
@@ -1047,9 +1049,9 @@ function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet',
     column[l] = col;
   }
   // Size the wrap to the tallest column instead of a fixed 640px: the
-  // plugin packs columns from the top, so an oversized wrap just leaves
-  // dead space below the bands. ~48px per node (node ~30px + nodePadding
-  // 14 + margin), clamped so a dense chart still gets the old 640px.
+  // layout packs columns from the top, so an oversized wrap just leaves
+  // dead space below the bands. ~48px per node (node ~30px + pad 14 +
+  // margin), clamped so a dense chart still gets the old 640px.
   const colCount = [0, 0, 0, 0];
   for (const l of labels) colCount[column[l]]++;
   const maxCol = Math.max(...colCount);
@@ -1087,67 +1089,48 @@ function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet',
     : renderedMerchants.has(String(x)) ? merchColor
     : catColor(String(x));
 
-  return new Chart(canvas, {
+  // Plotly sankey: same column pinning (credit = 0, accounts = 1,
+  // debit = 2, merchants = 3), same colors, same tooltip text.
+  // Node x is pinned so the topological layout can't move an account
+  // into the wrong column; y is left to Plotly's packing.
+  const linkColors = data.map(f => withAlpha(nodeColor(f.from), 0.5));
+  const trace = {
     type: 'sankey',
-    data: {
-      datasets: [{
-        data,
-        // Scriptable ctx: Chart.js passes the dataset context with
-        // ctx.raw = the raw data item ({from, to, flow}).
-        colorFrom: ctx => nodeColor((ctx && ctx.raw && ctx.raw.from) ?? ''),
-        colorTo: ctx => nodeColor((ctx && ctx.raw && ctx.raw.to) ?? ''),
-      }],
+    node: {
+      pad: 14,
+      thickness: 12,
+      color: labels.map(l => nodeColor(l)),
+      label: labels,
+      x: labels.map(l => column[l] / 3),
     },
-    options: {
-      responsive: true,
-      // Fixed-height .chart-wrap (app.css) — no aspect-ratio-derived
-      // height when the page first paints (layout-stability rule).
-      maintainAspectRatio: false,
-      layout: { padding: { top: 6, bottom: 6 } },
-      // Labels: the plugin draws node keys beside the nodes; give them
-      // the theme text color (default is black — unreadable on dark
-      // schemes). Keep the default font (the chart font).
-      // Middle-column (account) labels land over ribbons — the bands
-      // are alpha 0.5, so the bold theme-colored text stays readable
-      // over them (verified by screenshot on the live data).
-      nodeLabels: { display: true, color:
-        (css.getPropertyValue('--text') || '').trim() || '#25343f' },
-      nodeWidth: 12,
-      nodePadding: 14,
-      // Columns are pinned explicitly via `column` (built above):
-      // the plugin takes each pinned node's x from the map and skips
-      // graph-depth assignment — topology can't shove an account
-      // into the wrong column. modeX:'node' keeps any unpinned node
-      // at its natural graph depth (the default 'edge' mode would
-      // push every sink to the rightmost column), and nodeAlign:
-      // 'start' packs each column from the top instead of justifying.
-      modeX: 'node',
-      nodeAlign: 'start',
-      column,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          displayColors: false,
-          callbacks: {
-            title: () => '',
-            // Default shape: parsed._custom = {from:{key}, to:{key},
-            // flow} (the keys carry the U+0000 account separator) —
-            // render labels (never raw keys) and format the flow as
-            // money.
-            label(ctx) {
-              const p = ctx.parsed, c = p._custom || {};
-              const name = (r, f) => typeof r === 'string' ? r
-                : String((f && f.key) ?? '').replace('\u0000', ' · ');
-              const from = name(c.from, p.from);
-              const to = name(c.to, p.to);
-              const v = (c && typeof c.flow === 'number') ? c.flow : p.flow;
-              return `${from} → ${to}: ${fmtMoney(v)}`;
-            },
-          },
-        },
-      },
+    link: {
+      source: data.map(f => nodeIndex.get(f.from)),
+      target: data.map(f => nodeIndex.get(f.to)),
+      value: data.map(f => f.flow),
+      color: linkColors,
     },
-  });
+    // Default hover shows the node label or the link's money value.
+    valueformat: '$,.0f',
+  };
+  const layout = {
+    margin: { t: 6, r: 6, b: 6, l: 6 },
+    font: { color: (css.getPropertyValue('--text') || '').trim() || '#25343f', size: 12 },
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    showlegend: false,
+  };
+  const config = { displayModeBar: false, responsive: true };
+  try {
+    Plotly.newPlot(el, [trace], layout, config);
+  } catch (e) {
+    console.error('Plotly sankey failed to render:', e);
+    const h = document.createElement('div');
+    h.className = 'chart-empty';
+    h.textContent = 'sankey chart failed to render';
+    wrap.appendChild(h);
+    return null;
+  }
+  return el;
 }
 
 /* Categories page trend chart: monthly flow stacked over EXACTLY the

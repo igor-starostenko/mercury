@@ -267,7 +267,7 @@ main { padding: 22px 24px 48px; max-width: 1240px; margin: 0 auto; }
 .panel canvas { max-height: 340px; }
 /* The overview sankey sizes itself to the tallest column (see ui.js) —
    it must not be capped at the generic 340px panel-canvas ceiling. */
-.panel canvas#sankeyChart { max-height: none; }
+.panel div#sankeyChart { max-height: none; height: 100%; }
 
 .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .toolbar label { color: var(--muted); font-size: 13px; }

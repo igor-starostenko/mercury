@@ -11,7 +11,7 @@
 <title>Mercury — Month</title>
 <link rel="stylesheet" href="/static/css/app.css" />
 <script src="/static/vendor/chart.umd.min.js"></script>
-<script src="/static/vendor/chartjs-chart-sankey.min.js"></script>
+<script src="/static/vendor/plotly.min.js"></script>
 <script src="/static/js/common.js"></script>
 <script src="/static/js/ui.js"></script>
 </head>
@@ -83,7 +83,7 @@
       </div>
       <span class="hint">this month · income in, spend out · ignored rows excluded</span>
     </div>
-    <div class="panel"><div class="chart-wrap sankey"><canvas id="sankeyChart"></canvas></div></div>
+    <div class="panel"><div class="chart-wrap sankey"><div id="sankeyChart" role="img" aria-label="Money flow sankey"></div></div></div>
   </section>
 
   <section class="section">
