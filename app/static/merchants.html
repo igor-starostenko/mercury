@@ -872,7 +872,12 @@ async function runMerchantClassify() {
       const res = await api('/api/merchants/classify', { method: 'POST' });
       toast(`Classified ${res.classified} (${res.skipped} skipped)`);
     } catch (e) {
-      toast('Classify failed: ' + e.message, 6000);
+      if (e.status === 409) {
+        toast('A classify run is already in progress — this page will refresh when it finishes', 6000);
+        startClassifyStatusPolling();
+      } else {
+        toast('Classify failed: ' + e.message, 6000);
+      }
     }
   });
   if (window.onDataChanged) setTimeout(onDataChanged, 400);
