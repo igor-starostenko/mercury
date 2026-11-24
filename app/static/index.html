@@ -628,7 +628,7 @@ function renderMerchantTable(data) {
             encodeURIComponent(merchant) + '&limit=500');
           txnBox._txns = txns;
           txnBox._sortState = { key: 'date', dir: 'desc' };
-          txnBox._editable = false;
+          txnBox._editable = 'merchant';
           renderTxnTable(txnBox);
           txnBox._detailRender = null;
         } catch (e) {

@@ -221,3 +221,21 @@ def test_remove_merchant_drops_overrides_rules_color(tmp_path):
     r = con.execute(
         "SELECT merchant FROM effective_transactions WHERE id = 100").fetchone()
     assert r[0] is None
+
+
+def test_transactions_rows_carry_effective_merchant(tmp_path):
+    con = _conn(tmp_path)
+    _seed(con, [("Apple Card", "Checking", "2026-01-10", -12.0, "WALMART #123", 1),
+                ("Apple Card", "Checking", "2026-01-11", -5.0, "UBER TRIP", 1)])
+    merchants.set_merchant(con, 100, "Walmart", source="manual")
+    rows = analytics.transactions(con, merchant="Walmart", limit=10)
+    assert len(rows) == 1
+    assert rows[0]["merchant"] == "Walmart"
+    assert rows[0]["merchant_source"] == "manual"
+    # The merchant filter still selects on the effective merchant, and a
+    # rule-driven merchant surfaces through the same field.
+    merchants.create_rule(con, "uber", "Uber")
+    rows = analytics.transactions(con, merchant="Uber", limit=10)
+    assert len(rows) == 1
+    assert rows[0]["id"] == 101
+    assert rows[0]["merchant_source"] == "rule"
