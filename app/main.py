@@ -59,6 +59,7 @@ async def lifespan(_: FastAPI):
         # label (csv_imports.account) for the Manage Imports rename.
         con.execute(imports.CREATE_IMPORTS_SQL)
         imports.ensure_import_column(con)
+        imports.ensure_color_column(con)
         # Merchant tables must exist before the view: the view's merchant
         # layer reads merchant_overrides and merchant_rules.
         con.execute(merchants.CREATE_MERCHANT_RULES_SQL)
@@ -295,6 +296,10 @@ class ImportAccountBody(BaseModel):
     account: str
 
 
+class ImportColorBody(BaseModel):
+    color: str | None = None
+
+
 @app.get("/api/imports")
 def list_imports():
     """All CSV imports: each uploaded file (or a synthetic "earlier
@@ -328,6 +333,28 @@ def rename_import_account(import_id: int, body: ImportAccountBody):
             raise HTTPException(status_code=404, detail="no such import")
         con.commit()
         return {"id": import_id, "account": acct}
+    finally:
+        con.close()
+
+
+@app.post("/api/imports/{import_id}/color")
+def set_import_color(import_id: int, body: ImportColorBody):
+    """Set (or clear, with a null/empty color) an import's account color.
+    NULL means "use the bank's primary color" — the effective color is
+    returned so the UI can render it without a refetch."""
+    try:
+        normalized = imports.normalize_hex_color(body.color)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="color must be a hex color like #ff8800 (or null to reset)")
+    con = get_con()
+    try:
+        result = imports.set_import_color(con, import_id, normalized)
+        if result is None:
+            raise HTTPException(status_code=404, detail="no such import")
+        con.commit()
+        return {"id": import_id, "custom_color": normalized}
     finally:
         con.close()
 

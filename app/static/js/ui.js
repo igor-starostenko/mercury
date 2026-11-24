@@ -76,8 +76,9 @@ function renderChrome(active) {
           <button class="primary" onclick="pickFiles()">Import CSV files</button>
           <button onclick="pickFolder()">Import folder</button>
           <span class="hint">Each CSV becomes one import below — rename its
-          account label (e.g. a second checking at the same bank) or delete
-          it with all of its transactions. Rules are never touched.</span>
+          account label (e.g. a second checking at the same bank), pick its
+          color (default: the bank's primary color), or delete it with all
+          of its transactions. Rules are never touched.</span>
         </div>
         <div id="importsList" style="margin-top:14px"></div>
         <div class="modal-foot">
@@ -427,6 +428,7 @@ async function refreshImports() {
     <table class="imports-table">
       <thead><tr>
         <th>File</th><th>Bank</th><th>Account</th>
+        <th title="Account color — click the swatch to change it (default: the bank's primary color)">Color</th>
         <th class="num">Txns</th><th>Imported</th>
         <th class="num" title="Sum of the amounts of this import's transactions">Net</th>
         <th style="width:64px"></th>
@@ -448,6 +450,12 @@ function importsRowHTML(im, i) {
     <td>${file}</td>
     <td>${esc(im.source)}</td>
     <td><span class="imp-acct" data-row="${i}">${esc(im.account)}</span></td>
+    <td class="imp-color-cell">
+      <input type="color" class="imp-color" value="${esc(im.color || '#888888')}" data-row="${i}"
+             title="Account color — default: the bank's primary color"
+             aria-label="Account color" onchange="onImportColor(this)">
+      ${im.custom_color ? `<button class="imp-color-reset" data-row="${i}" title="Reset to the bank's primary color" onclick="resetImportColor(this)">↺</button>` : ''}
+    </td>
     <td class="num">${im.n}</td>
     <td${span}>${im.imported_at ? esc(String(im.imported_at).slice(0, 10)) : '—'}</td>
     <td class="num ${im.net < 0 ? 'neg' : im.net > 0 ? 'pos' : ''}">${fmtMoney(im.net)}</td>
@@ -519,6 +527,42 @@ async function deleteImportRow(btn) {
     toast('Delete failed: ' + e.message, 5000);
     if (tr) tr.style.opacity = '';
     return;
+  }
+  await refreshImports();
+}
+
+async function onImportColor(input) {
+  const i = Number(input.dataset.row);
+  const im = _importsData[i];
+  if (!im) return;
+  try {
+    await api('/api/imports/' + im.id + '/color', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ color: input.value }),
+    });
+    toast('Account color updated');
+    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  } catch (e) {
+    toast('Color change failed: ' + e.message, 5000);
+  }
+  await refreshImports();
+}
+
+async function resetImportColor(btn) {
+  const i = Number(btn.dataset.row);
+  const im = _importsData[i];
+  if (!im) return;
+  try {
+    await api('/api/imports/' + im.id + '/color', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ color: null }),
+    });
+    toast('Account color reset to the bank default');
+    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  } catch (e) {
+    toast('Reset failed: ' + e.message, 5000);
   }
   await refreshImports();
 }
@@ -895,8 +939,12 @@ function makeFlowChart(canvas, cfg) {
  * skPickers in index.html).
  * emptyMsg: text for the no-data hint (defaults to the generic
  * "no transactions yet" — the Overview passes a filter-specific one
- * when the pickers hid everything). */
-function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet') {
+ * when the pickers hid everything).
+ * accountColors: optional Map keyed by raw account key (source + '\u0000'
+ * + account) → CSS color; an account endpoint renders in its color
+ * (the theme-neutral fill when absent). */
+function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet',
+                        accountColors = null) {
   const existing = Chart.getChart(canvas);
   if (existing) existing.destroy();
   const wrap = canvas.parentElement;
@@ -1005,9 +1053,14 @@ function makeSankeyChart(canvas, flows, emptyMsg = 'no transactions yet') {
   const renderedAccts = new Set(acctKeys.map(acctLabel));
   const renderedMerchants = new Set(merchantKeys.map(merchLabel));
   const merchColor = (css.getPropertyValue('--accent') || '').trim() || '#ff9b51';
-  const nodeColor = x => renderedAccts.has(String(x)) ? acctColor
-                   : renderedMerchants.has(String(x)) ? merchColor
-                   : catColor(String(x));
+  // Rendered account label → raw (source, account) key, so the caller's
+  // per-account color map (keyed by raw key) resolves on the rendered
+  // labels the plugin passes in.
+  const rawKeyByLabel = new Map(acctKeys.map(k => [acctLabel(k), k]));
+  const nodeColor = x => renderedAccts.has(String(x))
+    ? (accountColors && accountColors.get(rawKeyByLabel.get(String(x)))) || acctColor
+    : renderedMerchants.has(String(x)) ? merchColor
+    : catColor(String(x));
 
   return new Chart(canvas, {
     type: 'sankey',

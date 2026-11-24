@@ -124,6 +124,7 @@ const SK_LS = 'mercury.sankeySel';
 const SK_ALL_OTHER = 'All other'; // node + menu entry for the catch-all
 let _skFlows = null; // full /api/sankey payload (all time)
 let _skMerchants = null; // full /api/sankey-merchants payload (all time)
+let _acctColors = null; // raw account key (source + '\u0000' + account) → color
 
 // Same (source, account) identity makeSankeyChart uses for node keys —
 // two banks can share an account name ("Checking").
@@ -430,7 +431,8 @@ function renderSankeyChart() {
   makeSankeyChart($id('sankeyChart'), flows,
     !(_skFlows || []).length ? 'no transactions yet'
       : !a.size ? 'pick at least one account'
-      : 'pick at least one spend category or "All other"');
+      : 'pick at least one spend category or "All other"',
+    _acctColors);
 }
 
 async function renderAll() {
@@ -483,7 +485,10 @@ async function renderAll() {
 
   // Sankey: each account → its categories → its merchants (all
   // time), filtered client-side by the account/category pickers
-  // (see sk* above).
+  // (see sk* above). Account colors (bank defaults or user overrides)
+  // are keyed by the same raw (source, account) identity the sankey
+  // uses for node keys.
+  _acctColors = new Map(accounts.map(a => [a.source + '\u0000' + a.account, a.color]));
   _skFlows = sankeyFlows;
   _skMerchants = sankeyMerchants || [];
   skPickers();
@@ -491,7 +496,7 @@ async function renderAll() {
   // Accounts.
   $id('accounts').innerHTML = accounts.length
     ? '<table><thead><tr><th>Source</th><th>Account</th><th class="num">Txns</th><th class="num">Net</th></tr></thead><tbody>' +
-      accounts.map(a => `<tr><td>${esc(a.source)}</td><td>${esc(a.account)}</td>
+      accounts.map(a => `<tr><td>${esc(a.source)}</td><td><span class="acct-dot" style="background:${esc(a.color || '#888888')}"></span>${esc(a.account)}</td>
         <td class="num">${a.n}</td>
         <td class="num ${a.net >= 0 ? 'pos' : 'neg'}">${fmtMoney(a.net)}</td></tr>`).join('') +
       '</tbody></table>'

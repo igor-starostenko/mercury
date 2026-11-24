@@ -118,6 +118,7 @@ const SK_LS = 'mercury.sankeySel';
 const SK_ALL_OTHER = 'All other'; // node + menu entry for the catch-all
 let _skFlows = null; // full /api/sankey payload (all time)
 let _skMerchants = null; // full /api/sankey-merchants payload (all time)
+let _acctColors = null; // raw account key (source + '\u0000' + account) → color
 
 // Same (source, account) identity makeSankeyChart uses for node keys —
 // two banks can share an account name ("Checking").
@@ -424,12 +425,15 @@ function renderSankeyChart() {
   makeSankeyChart($id('sankeyChart'), flows,
     !(_skFlows || []).length ? 'no transactions yet'
       : !a.size ? 'pick at least one account'
-      : 'pick at least one spend category or "All other"');
+      : 'pick at least one spend category or "All other"',
+    _acctColors);
 }
 
 async function renderSankeyPage() {
-  [_skFlows, _skMerchants] = await Promise.all([
-    api('/api/sankey'), api('/api/sankey-merchants')]);
+  const [sankeyFlows, merchants, accounts] = await Promise.all([
+    api('/api/sankey'), api('/api/sankey-merchants'), api('/api/accounts')]);
+  _acctColors = new Map(accounts.map(a => [a.source + '\u0000' + a.account, a.color]));
+  [_skFlows, _skMerchants] = [sankeyFlows, merchants];
   skPickers();
 }
 
