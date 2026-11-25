@@ -20,13 +20,23 @@ def _clear():
 
 
 def test_status_endpoint_reports_not_running_by_default():
-    assert main.classify_status() == {"running": False, "kind": None}
+    _classify_state.update({
+        "running": False, "kind": None, "total_unknown": 0, "processed_descs": 0,
+        "total_descs": 0, "classified": 0, "skipped": 0, "remaining_unknown": 0,
+        "batches_done": 0, "total_batches": 0,
+    })
+    status = main.classify_status()
+    assert status["running"] is False
+    assert status["kind"] is None
+    assert status["total_unknown"] == 0
 
 
 def test_status_endpoint_reports_in_flight():
     _set_in_flight("category")
     try:
-        assert main.classify_status() == {"running": True, "kind": "category"}
+        status = main.classify_status()
+        assert status["running"] is True
+        assert status["kind"] == "category"
     finally:
         _clear()
 

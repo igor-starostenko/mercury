@@ -97,3 +97,38 @@ def test_classify_endpoint_has_no_cap(monkeypatch, db_path):
     assert result["classified"] == 300
     assert result["of"] == 300
     assert result["unique_descriptions"] == 10
+
+
+def test_classify_loop_batches_and_reports_progress(monkeypatch, db_path):
+    # 30 distinct descriptions (> BATCH_SIZE) — two batches, applied per
+    # batch with progress written to the state dict after each.
+    # (i - 1) // 2: exactly 2 transactions per description, ids 1..60.
+    _setup(db_path, [(i, f"MERCHANT {(i - 1) // 2}") for i in range(1, 61)])
+    monkeypatch.setattr(main, "get_con", lambda: _con(db_path))
+    calls = []
+
+    def fake_batch(descs):
+        calls.append(list(descs))
+        return ["Shopping" for _ in descs]
+
+    monkeypatch.setenv("MERCURY_LLM_ENDPOINT", "http://localhost:1234/v1")
+    monkeypatch.setenv("MERCURY_LLM_MODEL", "test-model")
+    monkeypatch.setattr(main.llm, "classify_batch_llm", fake_batch)
+    result = main.classify()
+    assert len(calls) == 2
+    # Row order is nondeterministic (all fixture rows share a txn_date, and
+    # unknown_categories orders by txn_date DESC) — assert the batch sizes
+    # and the union of all descriptions, not their positions.
+    assert len(calls[0]) == 25
+    assert len(calls[1]) == 5
+    assert not (set(calls[0]) & set(calls[1]))
+    assert set(calls[0] + calls[1]) == {f"MERCHANT {i}" for i in range(30)}
+    assert result["classified"] == 60
+    assert result["of"] == 60
+    assert result["unique_descriptions"] == 30
+    state = main._classify_state
+    assert state["batches_done"] == 2
+    assert state["total_batches"] == 2
+    assert state["processed_descs"] == 30
+    assert state["classified"] == 60
+    assert state["remaining_unknown"] == 0

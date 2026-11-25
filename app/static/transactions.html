@@ -38,6 +38,11 @@
           <button role="tab" id="tabMerchant" aria-selected="false" onclick="switchTxnTab('merchant')">Match Merchant</button>
         </div>
         <button class="primary" id="classifyBtn" onclick="runClassify()">Classify unknown (LLM)</button>
+        <!-- Live batch progress while a classify run is in flight (ui.js classifyStatusTick). -->
+        <span class="classify-progress" id="classifyProgress" hidden>
+          <span class="classify-progress-track"><span class="classify-progress-fill" id="classifyProgressFill"></span></span>
+          <span class="classify-progress-text" id="classifyProgressText"></span>
+        </span>
         <!-- Shared hint (ui.js txnSearchHint): empty unless a non-default
              sort direction or an extra note is active. -->
         <span class="hint" id="ovHint"></span>
@@ -562,6 +567,7 @@ async function runClassify() {
   if (txnTab === 'merchant') {
     await withBusyButton('classifyBtn', 'Classifying…', async () => {
       toast('Classifying…');
+      startClassifyStatusPolling();
       try {
         const res = await api('/api/merchants/classify', { method: 'POST' });
         toast(`Classified ${res.classified} (${res.skipped} skipped)`);
@@ -579,6 +585,7 @@ async function runClassify() {
   }
   await withBusyButton('classifyBtn', 'Classifying…', async () => {
     toast('Classifying…');
+    startClassifyStatusPolling();
     try {
       const res = await api('/api/classify', { method: 'POST' });
       toast(`Classified ${res.classified} of ${res.of}`);

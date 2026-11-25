@@ -34,8 +34,17 @@ MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 # batches), so the UI polls /api/classify/status and stays disabled while a
 # run is in flight — including after a full page navigation mid-run. A
 # second request is rejected with 409 so two tabs can't double-run.
+#
+# Progress fields (total_unknown, processed_descs, total_descs,
+# classified, skipped, remaining_unknown, batches_done, total_batches) are
+# rewritten after every batch so the UI can show live batch progress.
 _classify_lock = threading.Lock()
-_classify_state = {"running": False, "kind": None}
+_classify_state = {
+    "running": False, "kind": None,
+    "total_unknown": 0, "processed_descs": 0, "total_descs": 0,
+    "classified": 0, "skipped": 0, "remaining_unknown": 0,
+    "batches_done": 0, "total_batches": 0,
+}
 
 
 @contextmanager
@@ -43,14 +52,75 @@ def _classify_guard(kind):
     if not _classify_lock.acquire(blocking=False):
         raise HTTPException(status_code=409,
                             detail="A classify run is already in progress")
-    _classify_state["running"] = True
-    _classify_state["kind"] = kind
+    _classify_state.update({
+        "running": True, "kind": kind,
+        "total_unknown": 0, "processed_descs": 0, "total_descs": 0,
+        "classified": 0, "skipped": 0, "remaining_unknown": 0,
+        "batches_done": 0, "total_batches": 0,
+    })
     try:
         yield
     finally:
         _classify_state["running"] = False
         _classify_state["kind"] = None
         _classify_lock.release()
+
+
+def _classify_loop(con, get_unknowns, classify_fn, apply_fn):
+    """Batch-classify remaining uncategorized/unskipped transactions.
+
+    Loop (per the user's spec): read the remaining unknown rows, take the
+    first llm.BATCH_SIZE distinct descriptions, classify them, apply the
+    results to EVERY transaction sharing those descriptions (marking
+    llm_skipped=true when the LLM returned None), commit per batch, then
+    re-read and repeat until no remaining uncategorized, unskipped rows
+    exist. Progress is written into _classify_state after every batch so
+    /api/classify/status can show live progress.
+
+    ``get_unknowns(con)`` returns the remaining unknown rows (dicts with
+    "id" and "description"). ``classify_fn(descs)`` returns one result per
+    description. ``apply_fn(con, row, result)`` writes the applied result.
+    Returns the summary dict for the endpoint to return.
+    """
+    state = _classify_state
+    initial = get_unknowns(con)
+    total = len(initial)
+    state["total_unknown"] = total
+    state["remaining_unknown"] = total
+    state["total_descs"] = len({(r["description"] or "") for r in initial})
+    state["total_batches"] = (state["total_descs"] + llm.BATCH_SIZE - 1) // llm.BATCH_SIZE
+    while True:
+        unknown = get_unknowns(con)
+        if not unknown:
+            break
+        descs = list(dict.fromkeys((r["description"] or "") for r in unknown))
+        batch_descs = descs[:llm.BATCH_SIZE]
+        batch_set = set(batch_descs)
+        results = classify_fn(batch_descs)
+        res_by_desc = dict(zip(batch_descs, results))
+        for row in unknown:
+            desc = row["description"] or ""
+            if desc not in batch_set:
+                continue
+            res = res_by_desc.get(desc)
+            if res:
+                apply_fn(con, row, res)
+                state["classified"] += 1
+            else:
+                con.execute(
+                    "UPDATE transactions SET llm_skipped = true WHERE id = ?",
+                    [row["id"]])
+                state["skipped"] += 1
+        con.commit()
+        state["processed_descs"] += len(batch_descs)
+        state["batches_done"] += 1
+        state["remaining_unknown"] = len(get_unknowns(con))
+    return {
+        "classified": state["classified"],
+        "skipped": state["skipped"],
+        "of": total,
+        "unique_descriptions": state["total_descs"],
+    }
 
 
 def get_con() -> duckdb.DuckDBPyConnection:
@@ -121,7 +191,7 @@ app = FastAPI(title="Mercury", lifespan=lifespan)
 
 @app.get("/api/classify/status")
 def classify_status():
-    return {"running": _classify_state["running"], "kind": _classify_state["kind"]}
+    return dict(_classify_state)
 
 
 # ---------------------------------------------------------------------------
@@ -522,25 +592,14 @@ def classify():
     with _classify_guard("category"):
         con = get_con()
         try:
-            unknown = analytics.unknown_categories(con, limit=None)
-            if not unknown:
-                return {"classified": 0, "of": 0}
-            # Classify each distinct description once; identical descriptions
-            # share one LLM result. Order-preserving dict keeps first-seen order.
-            unique_descs = list(dict.fromkeys(u["description"] for u in unknown))
-            results = llm.classify_batch_llm(unique_descs)
-            cat_by_desc = dict(zip(unique_descs, results))
-            updated = 0
-            for u in unknown:
-                cat = cat_by_desc.get(u["description"])
-                if cat:
-                    analytics.set_category(con, u["id"], cat, source="llm")
-                    updated += 1
-                else:
-                    con.execute("UPDATE transactions SET llm_skipped = true WHERE id = ?",
-                                [u["id"]])
-            con.commit()
-            return {"classified": updated, "of": len(unknown), "unique_descriptions": len(unique_descs)}
+            result = _classify_loop(
+                con,
+                lambda c: analytics.unknown_categories(c, limit=None),
+                llm.classify_batch_llm,
+                lambda c, row, cat: analytics.set_category(c, row["id"], cat, source="llm"),
+            )
+            return {"classified": result["classified"], "of": result["of"],
+                    "unique_descriptions": result["unique_descriptions"]}
         finally:
             con.close()
 
@@ -941,37 +1000,29 @@ def classify_merchants(set_by: str = "uncategorized"):
     with _classify_guard("merchant"):
         con = get_con()
         try:
-            rows = analytics.merchant_rows(con, limit=None,
-                                           include_uncategorized=True,
-                                           set_by=set_by)
-            targets = rows["rows"]
-            if not targets:
-                return {"classified": 0, "skipped": 0}
-            # Classify each distinct description once; identical descriptions
-            # share one LLM result. Order-preserving dict keeps first-seen order.
-            unique_descs = list(dict.fromkeys(r["description"] or "" for r in targets))
-            try:
-                guessed = llm.classify_merchants_batch_llm(unique_descs)
-            except llm.LLMNotConfigured as e:
-                raise HTTPException(status_code=503, detail=str(e))
-            except Exception as e:
-                raise HTTPException(status_code=502, detail=str(e))
-            guess_by_desc = dict(zip(unique_descs, guessed))
-            classified = 0
-            skipped = 0
-            for r in targets:
-                guess = guess_by_desc.get(r["description"] or "")
-                if guess:
-                    merchants.set_merchant(con, r["id"], guess, source="llm")
-                    classified += 1
-                else:
-                    con.execute("UPDATE transactions SET llm_skipped = true WHERE id = ?",
-                                [r["id"]])
-                    skipped += 1
-            con.commit()
-            return {"classified": classified, "skipped": skipped,
-                    "of": len(targets),
-                    "unique_descriptions": len(unique_descs)}
+            def get_unknowns(c):
+                return analytics.merchant_rows(
+                    c, limit=None, include_uncategorized=True, set_by=set_by
+                )["rows"]
+
+            def classify_fn(descs):
+                try:
+                    return llm.classify_merchants_batch_llm(descs)
+                except llm.LLMNotConfigured as e:
+                    raise HTTPException(status_code=503, detail=str(e))
+                except Exception as e:
+                    raise HTTPException(status_code=502, detail=str(e))
+
+            result = _classify_loop(
+                con,
+                get_unknowns,
+                classify_fn,
+                lambda c, row, guess: merchants.set_merchant(
+                    c, row["id"], guess, source="llm"),
+            )
+            return {"classified": result["classified"], "skipped": result["skipped"],
+                    "of": result["of"],
+                    "unique_descriptions": result["unique_descriptions"]}
         finally:
             con.close()
 
