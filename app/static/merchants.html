@@ -586,14 +586,27 @@ function renderMerchantTable(data) {
     return;
   }
   const totalSpend = rows.reduce((a, d) => a + d.spend, 0) || 1;
+  // Sortable columns: name / txns / spend / share (share == spend, same
+  // denominator). Default: spend desc, matching the server order.
+  if (!el._sortState) el._sortState = { key: 'spend', dir: 'desc' };
+  const st = el._sortState;
+  const sortVal = d => st.key === 'merchant' ? d.merchant
+    : st.key === 'n' ? d.n
+    : st.key === 'share' ? d.spend / totalSpend
+    : d.spend;
+  const sorted = rows.slice().sort((a, b) => {
+    const va = sortVal(a), vb = sortVal(b);
+    const cmp = typeof va === 'string' ? va.localeCompare(vb, undefined, { numeric: true }) : va - vb;
+    return (st.dir === 'asc' ? 1 : -1) * cmp || a.merchant.localeCompare(b.merchant);
+  });
+  const th = (key, label, extra, style, title) =>
+    `<th class="${extra ? extra + ' ' : ''}sortable" data-mkey="${key}"${style ? ` style="${style}"` : ''} title="${title || 'Sort by ' + label.toLowerCase() + ' — click to flip'}">${label}<span class="sort-ind">${st.key === key ? (st.dir === 'asc' ? '▲' : '▼') : ''}</span></th>`;
   el.innerHTML = `
     <table class="cat-table">
       <thead><tr>
-        <th style="width:28px"></th><th>Merchant</th><th class="num">Txns</th>
-        <th class="num">Spend</th>
-        <th style="width:24%" title="Share of total spend">Share</th>
+        <th style="width:28px"></th>${th('merchant', 'Merchant', '', '', 'Sort by name — click again to flip')}${th('n', 'Txns', 'num')}${th('spend', 'Spend', 'num')}${th('share', 'Share', '', 'width:24%', 'Share of total spend — sort by it')}
       </tr></thead>
-      <tbody>${rows.map((d, i) => {
+      <tbody>${sorted.map((d, i) => {
         const pct = ((d.spend / totalSpend) * 100).toFixed(1);
         return `
         <tr class="drill-row" data-i="${i}" data-merchant="${esc(d.merchant)}">
@@ -612,6 +625,16 @@ function renderMerchantTable(data) {
         </tr>`;
       }).join('')}</tbody>
     </table>`;
+  el.querySelectorAll('th.sortable').forEach(t => {
+    t.addEventListener('click', () => {
+      const key = t.dataset.mkey;
+      const cur = el._sortState;
+      el._sortState = cur.key === key
+        ? { key, dir: cur.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: key === 'merchant' ? 'asc' : 'desc' };
+      renderMerchantTable({ merchants: rows });
+    });
+  });
   el.querySelectorAll('.drill-row').forEach(row => {
     row.addEventListener('click', async () => {
       const detail = el.querySelector('#merch-det-' + row.dataset.i);
