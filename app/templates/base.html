@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<!-- Apply the saved color scheme (mercury.theme) before first paint
+     so there is no flash of the default scheme. -->
+<script>try { var _t = localStorage.getItem('mercury.theme'); if (_t) document.documentElement.dataset.theme = _t; } catch (e) {}</script>
+<link rel="icon" href="/static/img/favicon.ico" />
+<link rel="apple-touch-icon" sizes="180x180" href="/static/img/apple-touch-icon.png" />
+<title>{% block title %}Mercury{% endblock %}</title>
+<link rel="stylesheet" href="/static/css/app.css" />
+<script src="/static/vendor/chart.umd.min.js"></script>
+{% block vendored %}{% endblock %}
+<script src="/static/js/common.js"></script>
+<script src="/static/js/ui.js"></script>
+</head>
+<body>
+<div id="site-header"></div>
+<main>
+  <div class="page-range" id="page-range"></div>
+  {% block content %}{% endblock %}
+</main>
+<div class="toast" id="toast"></div>
+<div id="modal-root"></div>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -17,15 +17,18 @@ from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 
 import duckdb
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from . import ingest, analytics, llm, rules, merchants, date_ignores, imports, scoped_sankey
 
 DB_PATH = ingest.DB_PATH
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 MAX_UPLOAD_FILES = 200
 MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
@@ -1093,33 +1096,33 @@ def delete_date_ignore(ignore_id: int):
 # Static UI
 # ---------------------------------------------------------------------------
 @app.get("/")
-def index():
-    return FileResponse(STATIC_DIR / "index.html")
+def index(request: Request):
+    return templates.TemplateResponse(request, "index.html")
 
 
 @app.get("/year")
-def year_page():
-    return FileResponse(STATIC_DIR / "year.html")
+def year_page(request: Request):
+    return templates.TemplateResponse(request, "year.html")
 
 
 @app.get("/categories")
-def categories_page():
-    return FileResponse(STATIC_DIR / "categories.html")
+def categories_page(request: Request):
+    return templates.TemplateResponse(request, "categories.html")
 
 
 @app.get("/merchants")
-def merchants_page():
-    return FileResponse(STATIC_DIR / "merchants.html")
+def merchants_page(request: Request):
+    return templates.TemplateResponse(request, "merchants.html")
 
 
 @app.get("/transactions")
-def transactions_page():
-    return FileResponse(STATIC_DIR / "transactions.html")
+def transactions_page(request: Request):
+    return templates.TemplateResponse(request, "transactions.html")
 
 
 @app.get("/month")
-def month_page():
-    return FileResponse(STATIC_DIR / "month.html")
+def month_page(request: Request):
+    return templates.TemplateResponse(request, "month.html")
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
