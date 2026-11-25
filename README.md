@@ -27,6 +27,13 @@ Why you need to try it:
 The bottom line: statements in, honest charts out, nothing leaving the
 house.
 
+![Mercury Money Flow Sankey](docs/screenshots/sankey.png)
+
+The Money Flow Sankey maps where each account's money came from and
+landed — income categories in on the left, accounts in the middle,
+spend categories (and their merchants) on the right — all in one view,
+with ignored rows excluded.
+
 This is the Overview page: cash flow by month, year cards, your
 accounts, spend by category, and the income → accounts → spend flow
 map — income in on the left, accounts in the middle, where each
