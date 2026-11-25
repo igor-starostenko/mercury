@@ -1,30 +1,16 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<!-- Apply the saved color scheme (mercury.theme) before first paint
-     so there is no flash of the default scheme. -->
-<script>try { var _t = localStorage.getItem('mercury.theme'); if (_t) document.documentElement.dataset.theme = _t; } catch (e) {}</script>
-<link rel="icon" href="/static/img/favicon.ico" />
-<link rel="apple-touch-icon" sizes="180x180" href="/static/img/apple-touch-icon.png" />
-<title>Mercury — Month</title>
-<link rel="stylesheet" href="/static/css/app.css" />
-<script src="/static/vendor/chart.umd.min.js"></script>
-<script src="/static/vendor/chartjs-chart-sankey.min.js"></script>
-<script src="/static/js/common.js"></script>
-<script src="/static/js/ui.js"></script>
-</head>
-<body>
-<div id="site-header"></div>
-<main>
-  <div class="page-range" id="page-range"></div>
+{% extends "base.html" %}
+
+{% block title %}Mercury — Year{% endblock %}
+
+{% block vendored %}<script src="/static/vendor/chartjs-chart-sankey.min.js"></script>{% endblock %}
+
+{% block content %}
   <section class="section">
     <div class="toolbar">
-      <label for="monthSel">Month</label>
-      <button type="button" id="monthPrev" class="period-nav" aria-label="Previous month">‹</button>
-      <select id="monthSel"></select>
-      <button type="button" id="monthNext" class="period-nav" aria-label="Next month">›</button>
+      <label for="yearSel">Year</label>
+      <button type="button" id="yearPrev" class="period-nav" aria-label="Previous year">‹</button>
+      <select id="yearSel"></select>
+      <button type="button" id="yearNext" class="period-nav" aria-label="Next year">›</button>
       <span class="spacer"></span>
       <a href="/" style="color:var(--muted);font-size:13px">← back to overview</a>
     </div>
@@ -36,13 +22,13 @@
   </div>
 
   <section class="section">
-    <div class="cards" id="monthCards"></div>
+    <div class="cards" id="yearCards"></div>
   </section>
 
   <section class="section">
     <div class="section-head">
-      <h2>Weekly cash flow</h2>
-      <div class="seg" id="flowSeg" data-key="month" role="group" aria-label="Chart view">
+      <h2>Monthly cash flow</h2>
+      <div class="seg" id="flowSeg" data-key="year" role="group" aria-label="Chart view">
         <button type="button" data-mode="category">By category</button>
         <button type="button" data-mode="totals">Totals</button>
       </div>
@@ -81,7 +67,7 @@
              aria-multiselectable="true"
              aria-label="Merchants in the flow chart"></div>
       </div>
-      <span class="hint">this month · income in, spend out · ignored rows excluded</span>
+      <span class="hint">this year · income in, spend out · ignored rows excluded</span>
     </div>
     <div class="panel"><div class="chart-wrap sankey"><canvas id="sankeyChart"></canvas></div></div>
   </section>
@@ -89,50 +75,15 @@
   <section class="section">
     <div class="section-head">
       <h2>Spend by category</h2>
-      <span class="hint">this month · click a row to drill down</span>
+      <span class="hint">this year · click a row to drill down</span>
     </div>
     <div class="panel tight" id="catTable"></div>
   </section>
+{% endblock %}
 
-  <section class="section">
-    <div class="section-head">
-      <h2>Transactions</h2>
-      <span class="badge" id="txnCount"></span>
-      <!-- Shared hint (ui.js txnSearchHint — same as the Transactions
-           page): empty unless a non-default sort direction or an extra
-           note is active. -->
-      <span class="hint" id="txnHint"></span>
-    </div>
-    <!-- Same search bar as the Transactions page: one form inside the
-         panel above the table (the Categories rule-panel layout), shared
-         options + wiring in ui.js (wireTxnSearchBar / TXN_SET_BY_OPTIONS).
-         The data path stays client-side — the month window is fetched
-         once and the bar filters it here. -->
-    <div class="panel" id="txnPanel">
-      <form class="rule-form" onsubmit="return false">
-        <!-- Same bar order as the Transactions page (sr1us): "Set by"
-             left of the search input. Options populated from
-             TXN_SET_BY_OPTIONS (ui.js) — one source of truth shared
-             with the Transactions page. -->
-        <select id="setBySel" class="setby-sel" aria-label="Filter rows by who set the category">
-          <option value="all">All</option>
-        </select>
-        <input id="txnSearch" type="text" maxlength="200"
-               placeholder="Keyword, e.g. 'walmart'"
-               aria-label="Search transactions by description">
-      </form>
-      <!-- min-height reserves the list's space before the fetch lands
-           (the panel itself is no longer :empty — the form is a
-           permanent child — so the .panel:empty rule can't do it). -->
-      <div id="txnTable" style="min-height:120px"></div>
-    </div>
-  </section>
-</main>
-<div class="toast" id="toast"></div>
-<div id="modal-root"></div>
-
+{% block scripts %}
 <script>
-let curMonth = '';
+let flowChart = null;
 let _flowCfg = null; // last chart config, so the view toggle re-draws
                      // without refetching
 
@@ -141,13 +92,14 @@ let _flowCfg = null; // last chart config, so the view toggle re-draws
  * sr1us) — the localStorage selection (mercury.sankeySel) is SHARED
  * across the Overview, Year, Month and Merchants pages, so a picker
  * toggle on any of them redraws the others. The payload is SCOPED to
- * the selected month (/api/sankey?month=…) instead of all time. */
+ * the selected year (/api/sankey?year=…) instead of all time. */
 const SK_LS = 'mercury.sankeySel';
 const SK_ALL_OTHER = 'All other'; // node + menu entry for the catch-all
 const SK_DEFAULT_MERCHANTS = 15; // first-visit default: top 15 by debit
-let _skFlows = null; // /api/sankey payload (this month)
-let _skMerchants = null; // /api/sankey-merchants payload (this month)
+let _skFlows = null; // /api/sankey payload (this year)
+let _skMerchants = null; // /api/sankey-merchants payload (this year)
 let _acctColors = null; // raw account key (source + '\u0000' + account) → color
+let _merchColors = null; // merchant name → configured color
 
 // Same (source, account) identity makeSankeyChart uses for node keys —
 // two banks can share an account name ("Checking").
@@ -538,165 +490,113 @@ function renderSankeyChart() {
     !(_skFlows || []).length ? 'no transactions yet'
       : !a.size ? 'pick at least one account'
       : 'pick at least one spend category or "All other"',
-    _acctColors);
+    _acctColors, _merchColors);
 }
 
-window.onDataChanged = () => renderMonth(curMonth);
+window.onDataChanged = () => renderYear($id('yearSel').value);
 
-/* Description search + "Set by" dropdown on the "Transactions"
- * table — the SAME bar as the Transactions page (shared options, wiring
- * and hint logic in ui.js). Search matching is the category-rule
- * semantics (case-insensitive partial substring on whitespace-normalized
- * text), so the visible rows are exactly the rows a rule with the typed
- * pattern would catch. The Set-by filter narrows by who set the row's
- * effective category (txnSetByMatch) — same vocabulary as the "Set by"
- * column. Shown-count lives in the badge next to the h2; the hint only
- * carries the non-default sort direction (idle: the sort nudge). */
-function updateTxnChrome() {
-  const table = $id('txnTable');
-  const q = ($id('txnSearch').value || '').trim();
-  const by = $id('setBySel').value || 'all';
-  $id('txnCount').textContent = (q || by !== 'all')
-    ? (table._lastShown ?? 0) + ' of ' + (table._lastTotal ?? 0) + ' shown'
-    : (table._lastTotal ?? 0) + ' transactions';
-  $id('txnHint').textContent = txnSearchHint(q, table._sortState);
-}
-
-/* Shared bar wiring (ui.js wireTxnSearchBar — same as the Transactions
- * page). Client-side: the month window is already loaded, so no debounce;
- * the table re-renders directly. _detailRender routes header-sort clicks
- * through the chrome update too, so the hint tracks the sort state. */
-$id('setBySel').innerHTML = TXN_SET_BY_OPTIONS.map(([v, l]) =>
-  `<option value="${v}">${l}</option>`).join('');
-wireTxnSearchBar($id('txnSearch'), $id('setBySel'),
-  ({ q, setBy }) => {
-    const table = $id('txnTable');
-    table._search = q;
-    table._setBy = setBy;
-    renderTxnTable(table);
-    updateTxnChrome();
-  });
-$id('txnTable')._detailRender = () => {
-  renderTxnTable($id('txnTable'));
-  updateTxnChrome();
-};
-
-/* Calendar weeks (Mon–Sun) overlapping the month, clipped to it.
- * Returns [{week: 'YYYY-MM-DD' (Monday), label: 'Sep 1–7', ...}]. */
-function monthWeeks(month) {
-  const [y, m] = month.split('-').map(Number);
-  const first = Date.UTC(y, m - 1, 1);
-  const last = Date.UTC(y, m, 0); // 0th of next month = last day of m
-  let start = first;
-  start -= ((new Date(first).getUTCDay() + 6) % 7) * 86400000; // back to Monday
-  const out = [];
-  const f = ms => { const d = new Date(ms); return MONTHS_SHORT[d.getUTCMonth()] + ' ' + d.getUTCDate(); };
-  while (start <= last) {
-    const end = start + 6 * 86400000;
-    const a = Math.max(start, first);
-    const b = Math.min(end, last);
-    out.push({ week: new Date(start).toISOString().slice(0, 10),
-               label: a === b ? f(a) : f(a) + '–' + f(b) });
-    start += 7 * 86400000;
-  }
-  return out;
-}
-
-async function renderMonth(month) {
-  curMonth = month;
-  const [weeklyRes, cats, txns, sum, accts, skFlows, skMerchants] =
+async function renderYear(year) {
+  const [md, cats, allYears, sum, all, accts, skFlows, skMerchants, merchDistinct] =
     await Promise.all([
-    api('/api/weekly?month=' + encodeURIComponent(month) + '&by_category=true'),
-    api('/api/categories?month=' + encodeURIComponent(month)),
-    api('/api/transactions?month=' + encodeURIComponent(month) + '&limit=5000'),
-    api('/api/summary?month=' + encodeURIComponent(month)),
+    api('/api/monthly?year=' + encodeURIComponent(year)),
+    api('/api/categories?year=' + encodeURIComponent(year)),
+    api('/api/year-totals'),
+    api('/api/summary?year=' + encodeURIComponent(year)),
+    api('/api/monthly'), // all-time — the rolling 12-mo window must reach back into the prior year
     api('/api/accounts'),
-    api('/api/sankey?month=' + encodeURIComponent(month)),
-    api('/api/sankey-merchants?month=' + encodeURIComponent(month)),
+    api('/api/sankey?year=' + encodeURIComponent(year)),
+    api('/api/sankey-merchants?year=' + encodeURIComponent(year)),
+    api('/api/merchants/distinct'),
   ]);
   _acctColors = new Map(accts.map(a => [a.source + '\u0000' + a.account, a.color]));
+  _merchColors = new Map(((merchDistinct && merchDistinct.merchants) || []).map(d => [d.merchant, d.color]));
   _skFlows = skFlows || [];
   _skMerchants = skMerchants || [];
-  const weekly = weeklyRes.weeks;
 
-  // Summary cards from the complete weekly aggregates.
-  const income = weekly.reduce((a, w) => a + w.income, 0);
-  const spend = weekly.reduce((a, w) => a + w.spend, 0);
-  const net = income - spend;
-  const rate = income > 0 ? (net / income * 100).toFixed(1) + '%' : '—';
-  $id('monthCards').innerHTML = [
-    ['Income', fmtMoney(income), 'income'],
-    ['Spent', fmtMoney(spend), 'spend'],
-    ['Net', fmtMoney(net), net >= 0 ? 'income' : 'spend'],
+  const y = allYears.find(d => d.year === year) ||
+    { year, income: 0, spend: 0, net: 0, n: 0 };
+  const rate = y.income > 0 ? (y.net / y.income * 100).toFixed(1) + '%' : '—';
+  $id('yearCards').innerHTML = [
+    ['Income', fmtMoney(y.income), 'income'],
+    ['Spent', fmtMoney(y.spend), 'spend'],
+    ['Net', fmtMoney(y.net), y.net >= 0 ? 'income' : 'spend'],
     ['Savings rate', rate, ''],
   ].map(([l, v, c]) =>
-    `<div class="card"><div class="label">${l} · ${monthLong(month)}</div><div class="value ${c}">${v}</div></div>`).join('');
+    `<div class="card"><div class="label">${l} · ${year}</div><div class="value ${c}">${v}</div></div>`).join('');
 
-  // Weekly chart: merge calendar buckets with the API rows.
-  const weeks = monthWeeks(month);
-  const byWeek = Object.fromEntries(weekly.map(w => [w.week, w]));
-  makeFlowChart($id('flowChart'), _flowCfg = {
-    labels: weeks.map(w => w.label),
-    keys: weeks.map(w => w.week),
-    spend: weeks.map(w => (byWeek[w.week] || {}).spend || 0),
-    income: weeks.map(w => (byWeek[w.week] || {}).income || 0),
-    byCategory: (weeklyRes.flow_by_category || []).map(r =>
+  // Twelve calendar months, zero-filled.
+  const monthKeys = Array.from({ length: 12 }, (_, i) =>
+    `${year}-${String(i + 1).padStart(2, '0')}`);
+  // Rolling-12-mo average lines: computed over the ALL-TIME history so the
+  // window reaches back into the prior year.
+  const allMonths = [...new Set([
+    ...all.spend.map(d => d.month),
+    ...all.income.map(d => d.month),
+  ])].sort();
+  const allSpend = allMonths.map(m => all.spend.find(d => d.month === m)?.spend || 0);
+  const allIncome = allMonths.map(m => all.income.find(d => d.month === m)?.income || 0);
+  flowChart = makeFlowChart($id('flowChart'), _flowCfg = {
+    labels: MONTHS_SHORT,
+    keys: monthKeys,
+    spend: monthKeys.map(m => md.spend.find(d => d.month === m)?.spend || 0),
+    income: monthKeys.map(m => md.income.find(d => d.month === m)?.income || 0),
+    avgSpend: trailingAvg(allMonths, allSpend, 12, monthKeys),
+    avgIncome: trailingAvg(allMonths, allIncome, 12, monthKeys),
+    byCategory: (md.flow_by_category || []).map(r =>
       ({ key: r.bucket, category: r.category,
          spend: r.spend, income: r.income })),
-    modeKey: 'month',
+    modeKey: 'year',
+    onBar: i => location.href = '/month?month=' + monthKeys[i],
   });
-  $id('chartHint').textContent = `${monthLong(month)} · Mon–Sun weeks, clipped to the month`;
+  $id('chartHint').textContent =
+    `${year} · lines: trailing 12-month average · click a bar for the month view`;
 
-  renderCategoryTable($id('catTable'), cats, { month });
+  renderCategoryTable($id('catTable'), cats, { year });
   skPickers();
-
-  mountTxnTable($id('txnTable'), txns);
-  updateTxnChrome();
-  setPageRange(sum.first_date, sum.last_date, txnCountText(sum, 'no transactions in ' + monthLong(month)));
+  setPageRange(sum.first_date, sum.last_date, txnCountText(sum, 'no transactions in ' + year));
 }
 
 (async function init() {
-  renderChrome('month');
+  renderChrome('year');
   // Reserve the cards section height before the fetch so the page
-  // doesn't jump when the data lands (renderMonthCards replaces them).
-  $id('monthCards').innerHTML = skelCards(4, 'value');
+  // doesn't jump when the data lands (renderYearCards replaces them).
+  $id('yearCards').innerHTML = skelCards(4, 'value');
   CATS = await api('/api/standard-categories');
   wireFlowToggle('flowSeg',
     () => { if (_flowCfg) makeFlowChart($id('flowChart'), _flowCfg); });
   wireSkPickers();
   const periods = await api('/api/periods');
-  const sel = $id('monthSel');
-  const navigate = v => location.href = '/month?month=' + v;
-  if (!periods.months.length) {
+  const sel = $id('yearSel');
+  const navigate = v => location.href = '/year?year=' + v;
+  if (!periods.years.length) {
     // No data: swap the skeletons for a compact note (emptyHint explains),
-    // and drop the whole "Weekly cash flow" section so the fixed-height
+    // and drop the whole "Monthly cash flow" section so the fixed-height
     // .chart-wrap doesn't leave 320px of dead space. The pager buttons
     // still get wired — an empty select disables both.
-    $id('monthCards').innerHTML = '<p class="empty">No data yet.</p>';
+    $id('yearCards').innerHTML = '<p class="empty">No data yet.</p>';
     $id('emptyHint').style.display = 'block';
     $id('flowChart').closest('section').style.display = 'none';
     $id('sankeyChart').closest('section').style.display = 'none';
     wirePeriodNav({ sel, navigate,
-      prevBtn: $id('monthPrev'), nextBtn: $id('monthNext') });
+      prevBtn: $id('yearPrev'), nextBtn: $id('yearNext') });
     return;
   }
   // Newest first.
-  sel.innerHTML = periods.months.slice().reverse()
-    .map(m => `<option value="${m}">${monthLabel(m)}</option>`).join('');
-  const requested = getParam('month');
-  sel.value = requested && periods.months.includes(requested)
-    ? requested : periods.months[periods.months.length - 1];
+  sel.innerHTML = periods.years.slice().reverse()
+    .map(y => `<option>${y}</option>`).join('');
+  const requested = getParam('year');
+  sel.value = requested && periods.years.includes(requested)
+    ? requested : periods.years[periods.years.length - 1];
   sel.onchange = () => navigate(sel.value);
-  // ‹ › buttons + ArrowLeft/ArrowRight step through the months that have
+  // ‹ › buttons + ArrowLeft/ArrowRight step through the years that have
   // data; a button is disabled at the ends of the range.
   wirePeriodNav({ sel, navigate,
-    prevBtn: $id('monthPrev'), nextBtn: $id('monthNext') });
+    prevBtn: $id('yearPrev'), nextBtn: $id('yearNext') });
   try {
-    await renderMonth(sel.value);
+    await renderYear(sel.value);
   } catch (e) {
     toast('Failed to load: ' + e.message, 8000);
   }
 })();
 </script>
-</body>
-</html>
+{% endblock %}

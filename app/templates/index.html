@@ -1,54 +1,40 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<!-- Apply the saved color scheme (mercury.theme) before first paint
-     so there is no flash of the default scheme. -->
-<script>try { var _t = localStorage.getItem('mercury.theme'); if (_t) document.documentElement.dataset.theme = _t; } catch (e) {}</script>
-<link rel="icon" href="/static/img/favicon.ico" />
-<link rel="apple-touch-icon" sizes="180x180" href="/static/img/apple-touch-icon.png" />
-<title>Mercury — Year</title>
-<link rel="stylesheet" href="/static/css/app.css" />
-<script src="/static/vendor/chart.umd.min.js"></script>
-<script src="/static/vendor/chartjs-chart-sankey.min.js"></script>
-<script src="/static/js/common.js"></script>
-<script src="/static/js/ui.js"></script>
-</head>
-<body>
-<div id="site-header"></div>
-<main>
-  <div class="page-range" id="page-range"></div>
-  <section class="section">
-    <div class="toolbar">
-      <label for="yearSel">Year</label>
-      <button type="button" id="yearPrev" class="period-nav" aria-label="Previous year">‹</button>
-      <select id="yearSel"></select>
-      <button type="button" id="yearNext" class="period-nav" aria-label="Next year">›</button>
-      <span class="spacer"></span>
-      <a href="/" style="color:var(--muted);font-size:13px">← back to overview</a>
-    </div>
-  </section>
+{% extends "base.html" %}
 
+{% block title %}Mercury — Overview{% endblock %}
+
+{% block vendored %}<script src="/static/vendor/chartjs-chart-sankey.min.js"></script>{% endblock %}
+
+{% block content %}
   <div class="panel" id="emptyHint" style="display:none;margin-bottom:24px">
     <h2 style="margin:0 0 8px;font-size:16px">No transactions yet</h2>
-    <p style="color:var(--muted);margin:0">Import bank CSVs from the top bar, then come back here.</p>
+    <p style="color:var(--muted);margin:0">Use <b>Manage Imports</b> in the top bar to load
+    your bank exports (Wells Fargo, Chase, Apple Card, US Bank) — and later to rename
+    or delete any import. Files are matched by filename — keep the bank's original names.</p>
   </div>
 
   <section class="section">
-    <div class="cards" id="yearCards"></div>
+    <div class="section-head">
+      <h2>Cash flow by month</h2>
+      <div class="seg" id="flowSeg" data-key="overview" role="group" aria-label="Chart view">
+        <button type="button" data-mode="category">By category</button>
+        <button type="button" data-mode="totals">Totals</button>
+      </div>
+      <span class="hint">all time · lines: trailing 12-month average · click a bar for the month view</span>
+    </div>
+    <div class="panel"><div class="chart-wrap"><canvas id="flowChart"></canvas></div></div>
   </section>
 
   <section class="section">
     <div class="section-head">
-      <h2>Monthly cash flow</h2>
-      <div class="seg" id="flowSeg" data-key="year" role="group" aria-label="Chart view">
-        <button type="button" data-mode="category">By category</button>
-        <button type="button" data-mode="totals">Totals</button>
-      </div>
-      <span class="hint" id="chartHint"></span>
+      <h2>By year</h2>
+      <span class="hint">click a year for its detail</span>
     </div>
-    <div class="panel"><div class="chart-wrap"><canvas id="flowChart"></canvas></div></div>
+    <div class="cards" id="yearCards"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>Accounts</h2></div>
+    <div class="panel tight" id="accounts"></div>
   </section>
 
   <section class="section">
@@ -81,7 +67,7 @@
              aria-multiselectable="true"
              aria-label="Merchants in the flow chart"></div>
       </div>
-      <span class="hint">this year · income in, spend out · ignored rows excluded</span>
+      <span class="hint">all time · income in, spend out · ignored rows excluded</span>
     </div>
     <div class="panel"><div class="chart-wrap sankey"><canvas id="sankeyChart"></canvas></div></div>
   </section>
@@ -89,30 +75,58 @@
   <section class="section">
     <div class="section-head">
       <h2>Spend by category</h2>
-      <span class="hint">this year · click a row to drill down</span>
+      <span class="hint">all time · click a row to drill down</span>
     </div>
     <div class="panel tight" id="catTable"></div>
   </section>
-</main>
-<div class="toast" id="toast"></div>
-<div id="modal-root"></div>
 
+  <section class="section">
+    <div class="section-head">
+      <h2>Merchants</h2>
+      <span class="hint">all time · click a row to drill down · rename, recolor or remove</span>
+      <span class="badge" id="merchCount" aria-live="polite"></span>
+    </div>
+    <div class="panel tight" id="merchTable"></div>
+  </section>
+{% endblock %}
+
+{% block scripts %}
 <script>
-let flowChart = null;
+window.onDataChanged = renderAll;
+
 let _flowCfg = null; // last chart config, so the view toggle re-draws
                      // without refetching
 
 /* ------------------------------ money flow (sankey) */
-/* Duplicated from the Overview page on purpose (duplication OK per
- * sr1us) — the localStorage selection (mercury.sankeySel) is SHARED
- * across the Overview, Year, Month and Merchants pages, so a picker
- * toggle on any of them redraws the others. The payload is SCOPED to
- * the selected year (/api/sankey?year=…) instead of all time. */
+/* The sankey is a 3-column flow — NET-POSITIVE (income) categories
+ * on the LEFT, accounts in the MIDDLE, NET-NEGATIVE (spend)
+ * categories on the RIGHT — and is filtered by two multiselect
+ * pickers (the Categories-page catpick pattern): the accounts menu
+ * lists every payload account (default: ALL of them), the categories
+ * menu lists every NET-NEGATIVE category (first-visit default: the
+ * top 8 by DEBIT spend), and every net-negative category not
+ * individually selected aggregates into one "All other" node (on by
+ * default, checkable). Each category is classified by its NET
+ * position (credit − debit) across the whole payload: net positive →
+ * left (credit flows only), net negative → right (debit flows only),
+ * net zero → not shown at all. The picker controls the right side
+ * only — the left side always renders in full: there are 1–2 income
+ * categories and hiding income would be nonsense, so none of them
+ * are listed. A v1.6.0 saved selection may name net-positive
+ * categories (its top-8-by-gross default) — normalization drops them
+ * silently; they render regardless. The
+ * selection persists in localStorage
+ * (mercury.sankeySel: {accounts, categories, allOther} — a missing
+ * allOther key reads as true, so v1.4.0 state migrates cleanly) and
+ * the filtering is CLIENT-SIDE over the cached /api/sankey payload —
+ * toggling a box redraws instantly with no refetch, and the API keeps
+ * returning the full honest all-time payload (sign-split per row).
+ */
 const SK_LS = 'mercury.sankeySel';
 const SK_ALL_OTHER = 'All other'; // node + menu entry for the catch-all
 const SK_DEFAULT_MERCHANTS = 15; // first-visit default: top 15 by debit
-let _skFlows = null; // /api/sankey payload (this year)
-let _skMerchants = null; // /api/sankey-merchants payload (this year)
+let _skFlows = null; // full /api/sankey payload (all time)
+let _skMerchants = null; // full /api/sankey-merchants payload (all time)
 let _acctColors = null; // raw account key (source + '\u0000' + account) → color
 let _merchColors = null; // merchant name → configured color
 
@@ -157,11 +171,19 @@ function skAcctOptions() {
 
 /* Category menu: the NET-NEGATIVE (spend) categories as individual
  * options — per-category DEBIT totals from the payload, debit-spend-
- * desc with name asc on ties. The picker controls the RIGHT side of
- * the 3-column flow only: net-positive categories never appear — they
- * render in full on the left regardless of the selection. The "All
- * other" catch-all aggregates the net-negative categories that aren't
- * individually selected. */
+ * desc with name asc on ties (so the head of the list IS the top-N-by-
+ * debit the first-visit default checks; computed from the chart's
+ * own data so the menu and the "All other" bucket always agree on
+ * which spend categories exist). The picker controls the RIGHT side
+ * of the 3-column flow only: net-positive categories (Income,
+ * Investing in the live data) never appear — they render in full on
+ * the left regardless of the selection (hiding income would be
+ * nonsense; there are 1–2 of them). The "All other" catch-all still
+ * aggregates the net-negative categories that aren't individually
+ * selected. A v1.6.0 saved selection may name net-positive
+ * categories (its top-8-by-gross default) — skPickers' normalization
+ * drops them; they render regardless. A category whose NET position
+ * is zero is neither left nor right — it is not shown at all. */
 const SK_DEFAULT_CATS = 8; // first-visit default: top 8 by DEBIT spend
 function skCatList() {
   const debit = {}, net = {};
@@ -176,8 +198,11 @@ function skCatList() {
 }
 
 /* Merchant menu: every merchant with a spend-side debit, sorted by
- * debit spend desc (name asc on ties). Rows with no effective merchant
- * or with no debit are skipped. */
+ * debit spend desc (name asc on ties — so the head of the list IS the
+ * top-N-by-debit the first-visit default checks). Rows with no
+ * effective merchant or with no debit are skipped (they render no
+ * merchant edge). The merchant column's other rows (credit-only)
+ * are never listed. */
 function skMerchList() {
   const debit = {};
   for (const f of _skMerchants || []) {
@@ -190,7 +215,7 @@ function skMerchList() {
 }
 
 /* Rebuild both menus from the cached payload + current selection
- * (called on every render, so rule/import changes reshuffle the
+ * (called on every renderAll, so rule/import changes reshuffle the
  * options; idempotent). */
 function skPickers() {
   const acctOpts = skAcctOptions();
@@ -206,16 +231,24 @@ function skPickers() {
   const sel = {};
   for (const which of ['accounts', 'categories', 'merchants']) {
     if (!opts[which].length) {
-      // Empty scope: nothing to normalize against — keep the stored
-      // list (or none) so a first paint can't burn the default.
+      // Empty DB: nothing to normalize against — keep the stored list
+      // (or none) so a first paint can't burn the default.
       sel[which] = saved && Array.isArray(saved[which])
         ? saved[which].filter(x => typeof x === 'string') : [];
       continue;
     }
     // A saved selection is respected as-is (a saved [] stays []),
     // normalized to names that still exist in the menu; first visit →
-    // accounts = the WHOLE menu, categories = top 8 by DEBIT spend,
-    // merchants = top 15 by DEBIT spend.
+    // the first-paint default: accounts = the WHOLE menu, categories
+    // = only the top 8 by DEBIT spend, merchants = the top 15 by
+    // DEBIT spend — the menu lists every DEBIT-spending merchant, so
+    // defaulting to the whole menu would check all of them and leave
+    // the "All other" bucket empty.
+    // Normalization against the net-negative-only menu is also what
+    // migrates v1.6.0 state: a saved top-8-by-gross selection may
+    // name net-positive categories (Income/Investing) — they drop
+    // out here silently and still render on the left, since the
+    // credit side is always full.
     sel[which] = saved && Array.isArray(saved[which])
       ? [...new Set(saved[which].filter(
           x => typeof x === 'string' && opts[which].includes(x)))]
@@ -326,7 +359,7 @@ function paintSkMerchLabel(sel, total) {
 
 /* Merchant picker: a search box on top of the checkbox list, so any
  * merchant can be found and picked (beyond the top-15 default). The
- * menu rebuilds on every render (data change) — the search text
+ * menu rebuilds on every renderAll (data change) — the search text
  * resets with it, which is correct for a fresh payload. */
 function paintSkMerchPicker(opts, sel) {
   const menu = $id('skMerchPickMenu');
@@ -508,111 +541,242 @@ function renderSankeyChart() {
     _acctColors, _merchColors);
 }
 
-window.onDataChanged = () => renderYear($id('yearSel').value);
+/* Merchants table — distinct effective merchants (all time), each
+ * with a randomly-assigned-then-user-changeable color. Click a row to
+ * unfold its transactions (same drill-down pattern as Spend by
+ * category). The detail header carries rename / recolor / remove
+ * controls; rename re-tags every row carrying the old name (overrides
+ * and rules), remove deletes every trace of the merchant. */
+function renderMerchantTable(data) {
+  const el = $id('merchTable');
+  const rows = (data && data.merchants) || [];
+  $id('merchCount').textContent = rows.length
+    ? rows.length + ' merchant' + (rows.length > 1 ? 's' : '') : '';
+  if (!rows.length) {
+    el.innerHTML = '<p class="empty">No merchants yet — classify or tag transactions.</p>';
+    return;
+  }
+  const totalSpend = rows.reduce((a, d) => a + d.spend, 0) || 1;
+  // Sortable columns: name / txns / spend / share (share == spend, same
+  // denominator). Default: spend desc, matching the server order.
+  if (!el._sortState) el._sortState = { key: 'spend', dir: 'desc' };
+  const st = el._sortState;
+  const sortVal = d => st.key === 'merchant' ? d.merchant
+    : st.key === 'n' ? d.n
+    : st.key === 'share' ? d.spend / totalSpend
+    : d.spend;
+  const sorted = rows.slice().sort((a, b) => {
+    const va = sortVal(a), vb = sortVal(b);
+    const cmp = typeof va === 'string' ? va.localeCompare(vb, undefined, { numeric: true }) : va - vb;
+    return (st.dir === 'asc' ? 1 : -1) * cmp || a.merchant.localeCompare(b.merchant);
+  });
+  const th = (key, label, extra, style, title) =>
+    `<th class="${extra ? extra + ' ' : ''}sortable" data-mkey="${key}"${style ? ` style="${style}"` : ''} title="${title || 'Sort by ' + label.toLowerCase() + ' — click to flip'}">${label}<span class="sort-ind">${st.key === key ? (st.dir === 'asc' ? '▲' : '▼') : ''}</span></th>`;
+  el.innerHTML = `
+    <table class="cat-table">
+      <thead><tr>
+        <th style="width:28px"></th>${th('merchant', 'Merchant', '', '', 'Sort by name — click again to flip')}${th('n', 'Txns', 'num')}${th('spend', 'Spend', 'num')}${th('share', 'Share', '', 'width:24%', 'Share of total spend — sort by it')}
+      </tr></thead>
+      <tbody>${sorted.map((d, i) => {
+        const pct = ((d.spend / totalSpend) * 100).toFixed(1);
+        return `
+        <tr class="drill-row" data-i="${i}" data-merchant="${esc(d.merchant)}">
+          <td><span class="chev">▶</span></td>
+          <td><span class="dot" style="background:${esc(d.color)}"></span>${esc(d.merchant)}</td>
+          <td class="num">${d.n}</td>
+          <td class="num neg">${fmtMoney(-d.spend)}</td>
+          <td><div class="share-split">
+            <div class="share-side neg"><span class="share-pct">${pct}%</span><div class="share-bar"><i style="width:${pct}%;background:${esc(d.color)}"></i></div></div>
+            <div class="share-zero"></div>
+            <div class="share-side pos"><div class="share-bar"><i style="width:0"></i></div><span class="share-pct"></span></div>
+          </div></td>
+        </tr>
+        <tr class="detail-row" id="merch-det-${i}" style="display:none">
+          <td colspan="5"><div class="detail-wrap" data-merchant="${esc(d.merchant)}"></div></td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+  el.querySelectorAll('th.sortable').forEach(t => {
+    t.addEventListener('click', () => {
+      const key = t.dataset.mkey;
+      const cur = el._sortState;
+      el._sortState = cur.key === key
+        ? { key, dir: cur.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: key === 'merchant' ? 'asc' : 'desc' };
+      renderMerchantTable({ merchants: rows });
+    });
+  });
+  el.querySelectorAll('.drill-row').forEach(row => {
+    row.addEventListener('click', async () => {
+      const detail = el.querySelector('#merch-det-' + row.dataset.i);
+      const wrap = detail.querySelector('.detail-wrap');
+      const merchant = row.dataset.merchant;
+      if (detail.style.display !== 'none') {
+        detail.style.display = 'none'; row.classList.remove('open');
+        return;
+      }
+      detail.style.display = ''; row.classList.add('open');
+      if (!wrap.dataset.loaded) {
+        wrap.innerHTML = '<p class="empty" style="padding:14px">Loading…</p>';
+        const entry = rows.find(d => d.merchant === merchant) || {};
+        wrap.innerHTML = `
+          <div class="detail-head">
+            <span>${esc(merchant)}</span>
+            <span>
+              <input type="text" class="merch-rename" maxlength="100" value="${esc(merchant)}" aria-label="New merchant name" style="width:160px">
+              <button class="primary" data-act="rename" style="margin-left:6px">Rename</button>
+              <input type="color" class="merch-color" value="${esc(entry.color || '#888888')}" title="Change color" aria-label="Change merchant color" style="width:32px;height:24px;padding:0;border:0;background:none;cursor:pointer;vertical-align:middle;margin-left:10px">
+              <button class="rule-del" data-act="remove" style="margin-left:8px" title="Remove this merchant">×</button>
+            </span>
+          </div>
+          <div class="merch-detail-txns" style="min-height:80px"><p class="empty" style="padding:14px">Loading…</p></div>`;
+        const txnBox = wrap.querySelector('.merch-detail-txns');
+        try {
+          const txns = await api('/api/transactions?merchant=' +
+            encodeURIComponent(merchant) + '&limit=500');
+          txnBox._txns = txns;
+          txnBox._sortState = { key: 'date', dir: 'desc' };
+          txnBox._editable = 'merchant';
+          renderTxnTable(txnBox);
+          txnBox._detailRender = null;
+        } catch (e) {
+          txnBox.innerHTML = '<p class="empty" style="padding:14px">' + esc(e.message) + '</p>';
+        }
+        // Toolbar actions.
+        wrap.querySelector('[data-act="rename"]').addEventListener('click', async () => {
+          const input = wrap.querySelector('.merch-rename');
+          const newName = (input.value || '').trim();
+          if (!newName || newName === merchant) return;
+          try {
+            await api('/api/merchants/rename', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ old: merchant, new: newName }),
+            });
+            toast('Renamed to ' + newName);
+            if (window.onDataChanged) setTimeout(onDataChanged, 300);
+          } catch (e) { toast('Rename failed: ' + e.message, 6000); }
+        });
+        wrap.querySelector('.merch-color').addEventListener('change', async (e) => {
+          const color = e.target.value;
+          try {
+            await api('/api/merchants/color', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ merchant, color }),
+            });
+            // Update the row's dot + share bar in place (no re-render,
+            // so the open detail stays open).
+            const dot = row.querySelector('.dot');
+            if (dot) dot.style.background = color;
+            const bar = row.querySelector('.share-bar i');
+            if (bar) bar.style.background = color;
+            if (_merchColors) { _merchColors.set(merchant, color); renderSankeyChart(); }
+            toast('Color updated');
+          } catch (e) { toast('Color failed: ' + e.message, 6000); }
+        });
+        wrap.querySelector('[data-act="remove"]').addEventListener('click', async () => {
+          if (!confirm('Remove merchant "' + merchant + '"? This deletes its rules and per-transaction overrides — rows revert to untagged.')) return;
+          try {
+            await api('/api/merchants/remove', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ merchant }),
+            });
+            toast('Removed ' + merchant);
+            if (window.onDataChanged) setTimeout(onDataChanged, 300);
+          } catch (e) { toast('Remove failed: ' + e.message, 6000); }
+        });
+        wrap.dataset.loaded = '1';
+      }
+    });
+  });
+}
 
-async function renderYear(year) {
-  const [md, cats, allYears, sum, all, accts, skFlows, skMerchants, merchDistinct] =
+async function renderAll() {
+  const [summary, monthly, years, cats, accounts, sankeyFlows, sankeyMerchants, merchData] =
     await Promise.all([
-    api('/api/monthly?year=' + encodeURIComponent(year)),
-    api('/api/categories?year=' + encodeURIComponent(year)),
+    api('/api/summary'),
+    api('/api/monthly'),
     api('/api/year-totals'),
-    api('/api/summary?year=' + encodeURIComponent(year)),
-    api('/api/monthly'), // all-time — the rolling 12-mo window must reach back into the prior year
+    api('/api/categories'),
     api('/api/accounts'),
-    api('/api/sankey?year=' + encodeURIComponent(year)),
-    api('/api/sankey-merchants?year=' + encodeURIComponent(year)),
+    api('/api/sankey'),
+    api('/api/sankey-merchants'),
     api('/api/merchants/distinct'),
   ]);
-  _acctColors = new Map(accts.map(a => [a.source + '\u0000' + a.account, a.color]));
-  _merchColors = new Map(((merchDistinct && merchDistinct.merchants) || []).map(d => [d.merchant, d.color]));
-  _skFlows = skFlows || [];
-  _skMerchants = skMerchants || [];
 
-  const y = allYears.find(d => d.year === year) ||
-    { year, income: 0, spend: 0, net: 0, n: 0 };
-  const rate = y.income > 0 ? (y.net / y.income * 100).toFixed(1) + '%' : '—';
-  $id('yearCards').innerHTML = [
-    ['Income', fmtMoney(y.income), 'income'],
-    ['Spent', fmtMoney(y.spend), 'spend'],
-    ['Net', fmtMoney(y.net), y.net >= 0 ? 'income' : 'spend'],
-    ['Savings rate', rate, ''],
-  ].map(([l, v, c]) =>
-    `<div class="card"><div class="label">${l} · ${year}</div><div class="value ${c}">${v}</div></div>`).join('');
+  $id('emptyHint').style.display = summary.n_transactions ? 'none' : 'block';
+  setPageRange(summary.first_date, summary.last_date, txnCountText(summary));
 
-  // Twelve calendar months, zero-filled.
-  const monthKeys = Array.from({ length: 12 }, (_, i) =>
-    `${year}-${String(i + 1).padStart(2, '0')}`);
-  // Rolling-12-mo average lines: computed over the ALL-TIME history so the
-  // window reaches back into the prior year.
-  const allMonths = [...new Set([
-    ...all.spend.map(d => d.month),
-    ...all.income.map(d => d.month),
+  // All-time monthly flow (union of months with spend or income).
+  const months = [...new Set([
+    ...monthly.spend.map(d => d.month),
+    ...monthly.income.map(d => d.month),
   ])].sort();
-  const allSpend = allMonths.map(m => all.spend.find(d => d.month === m)?.spend || 0);
-  const allIncome = allMonths.map(m => all.income.find(d => d.month === m)?.income || 0);
-  flowChart = makeFlowChart($id('flowChart'), _flowCfg = {
-    labels: MONTHS_SHORT,
-    keys: monthKeys,
-    spend: monthKeys.map(m => md.spend.find(d => d.month === m)?.spend || 0),
-    income: monthKeys.map(m => md.income.find(d => d.month === m)?.income || 0),
-    avgSpend: trailingAvg(allMonths, allSpend, 12, monthKeys),
-    avgIncome: trailingAvg(allMonths, allIncome, 12, monthKeys),
-    byCategory: (md.flow_by_category || []).map(r =>
+  const spend = months.map(m => monthly.spend.find(d => d.month === m)?.spend || 0);
+  const income = months.map(m => monthly.income.find(d => d.month === m)?.income || 0);
+  makeFlowChart($id('flowChart'), _flowCfg = {
+    labels: months.map(monthLabel),
+    keys: months,
+    spend,
+    income,
+    avgSpend: trailingAvg(months, spend, 12),
+    avgIncome: trailingAvg(months, income, 12),
+    byCategory: (monthly.flow_by_category || []).map(r =>
       ({ key: r.bucket, category: r.category,
          spend: r.spend, income: r.income })),
-    modeKey: 'year',
-    onBar: i => location.href = '/month?month=' + monthKeys[i],
+    modeKey: 'overview',
+    onBar: i => location.href = '/month?month=' + months[i],
   });
-  $id('chartHint').textContent =
-    `${year} · lines: trailing 12-month average · click a bar for the month view`;
 
-  renderCategoryTable($id('catTable'), cats, { year });
+  // Per-year cards.
+  $id('yearCards').innerHTML = years.map(y => `
+    <div class="card clickable" onclick="location.href='/year?year=${y.year}'">
+      <div class="label">${y.year}</div>
+      <div class="row"><span>Income</span><b class="pos">${fmtMoney(y.income)}</b></div>
+      <div class="row"><span>Spent</span><b class="neg">${fmtMoney(y.spend)}</b></div>
+      <div class="row"><span>Net</span><b class="${y.net >= 0 ? 'pos' : 'neg'}">${fmtMoney(y.net)}</b></div>
+    </div>`).join('') || '<p class="empty">No data yet.</p>';
+
+  // Category totals with drill-down.
+  renderCategoryTable($id('catTable'), cats, {});
+
+  // Distinct merchants with drill-down.
+  renderMerchantTable(merchData);
+
+  // Sankey: each account → its categories → its merchants (all
+  // time), filtered client-side by the account/category pickers
+  // (see sk* above). Account colors (bank defaults or user overrides)
+  // are keyed by the same raw (source, account) identity the sankey
+  // uses for node keys.
+  _acctColors = new Map(accounts.map(a => [a.source + '\u0000' + a.account, a.color]));
+  _merchColors = new Map(((merchData && merchData.merchants) || []).map(d => [d.merchant, d.color]));
+  _skFlows = sankeyFlows;
+  _skMerchants = sankeyMerchants || [];
   skPickers();
-  setPageRange(sum.first_date, sum.last_date, txnCountText(sum, 'no transactions in ' + year));
+
+  // Accounts.
+  $id('accounts').innerHTML = accounts.length
+    ? '<table><thead><tr><th>Source</th><th>Account</th><th class="num">Txns</th><th class="num">Net</th></tr></thead><tbody>' +
+      accounts.map(a => `<tr><td>${esc(a.source)}</td><td><span class="acct-dot" style="background:${esc(a.color || '#888888')}"></span>${esc(a.account)}</td>
+        <td class="num">${a.n}</td>
+        <td class="num ${a.net >= 0 ? 'pos' : 'neg'}">${fmtMoney(a.net)}</td></tr>`).join('') +
+      '</tbody></table>'
+    : '<p class="empty">No accounts.</p>';
 }
 
 (async function init() {
-  renderChrome('year');
-  // Reserve the cards section height before the fetch so the page
-  // doesn't jump when the data lands (renderYearCards replaces them).
-  $id('yearCards').innerHTML = skelCards(4, 'value');
+  renderChrome('home');
+  // Reserve the year-cards section height before the fetch so the page
+  // doesn't jump when the data lands (renderAll replaces the skeletons).
+  $id('yearCards').innerHTML = skelCards(4, 'rows');
   CATS = await api('/api/standard-categories');
   wireFlowToggle('flowSeg',
     () => { if (_flowCfg) makeFlowChart($id('flowChart'), _flowCfg); });
   wireSkPickers();
-  const periods = await api('/api/periods');
-  const sel = $id('yearSel');
-  const navigate = v => location.href = '/year?year=' + v;
-  if (!periods.years.length) {
-    // No data: swap the skeletons for a compact note (emptyHint explains),
-    // and drop the whole "Monthly cash flow" section so the fixed-height
-    // .chart-wrap doesn't leave 320px of dead space. The pager buttons
-    // still get wired — an empty select disables both.
-    $id('yearCards').innerHTML = '<p class="empty">No data yet.</p>';
-    $id('emptyHint').style.display = 'block';
-    $id('flowChart').closest('section').style.display = 'none';
-    $id('sankeyChart').closest('section').style.display = 'none';
-    wirePeriodNav({ sel, navigate,
-      prevBtn: $id('yearPrev'), nextBtn: $id('yearNext') });
-    return;
-  }
-  // Newest first.
-  sel.innerHTML = periods.years.slice().reverse()
-    .map(y => `<option>${y}</option>`).join('');
-  const requested = getParam('year');
-  sel.value = requested && periods.years.includes(requested)
-    ? requested : periods.years[periods.years.length - 1];
-  sel.onchange = () => navigate(sel.value);
-  // ‹ › buttons + ArrowLeft/ArrowRight step through the years that have
-  // data; a button is disabled at the ends of the range.
-  wirePeriodNav({ sel, navigate,
-    prevBtn: $id('yearPrev'), nextBtn: $id('yearNext') });
   try {
-    await renderYear(sel.value);
+    await renderAll();
   } catch (e) {
     toast('Failed to load: ' + e.message, 8000);
   }
 })();
 </script>
-</body>
-</html>
+{% endblock %}

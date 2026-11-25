@@ -1,0 +1,686 @@
+{% extends "base.html" %}
+
+{% block title %}Mercury — Month{% endblock %}
+
+{% block vendored %}<script src="/static/vendor/chartjs-chart-sankey.min.js"></script>{% endblock %}
+
+{% block content %}
+  <section class="section">
+    <div class="toolbar">
+      <label for="monthSel">Month</label>
+      <button type="button" id="monthPrev" class="period-nav" aria-label="Previous month">‹</button>
+      <select id="monthSel"></select>
+      <button type="button" id="monthNext" class="period-nav" aria-label="Next month">›</button>
+      <span class="spacer"></span>
+      <a href="/" style="color:var(--muted);font-size:13px">← back to overview</a>
+    </div>
+  </section>
+
+  <div class="panel" id="emptyHint" style="display:none;margin-bottom:24px">
+    <h2 style="margin:0 0 8px;font-size:16px">No transactions yet</h2>
+    <p style="color:var(--muted);margin:0">Import bank CSVs from the top bar, then come back here.</p>
+  </div>
+
+  <section class="section">
+    <div class="cards" id="monthCards"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Weekly cash flow</h2>
+      <div class="seg" id="flowSeg" data-key="month" role="group" aria-label="Chart view">
+        <button type="button" data-mode="category">By category</button>
+        <button type="button" data-mode="totals">Totals</button>
+      </div>
+      <span class="hint" id="chartHint"></span>
+    </div>
+    <div class="panel"><div class="chart-wrap"><canvas id="flowChart"></canvas></div></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Money Flow</h2>
+      <div class="catpick" id="skAcctPick">
+        <button type="button" class="catpick-btn" id="skAcctPickBtn"
+                aria-haspopup="true" aria-expanded="false">
+          <span id="skAcctPickLabel">…</span><span class="catpick-caret">▾</span>
+        </button>
+        <div class="catpick-menu" id="skAcctPickMenu" role="listbox"
+             aria-multiselectable="true"
+             aria-label="Accounts in the flow chart"></div>
+      </div>
+      <div class="catpick" id="skCatPick">
+        <button type="button" class="catpick-btn" id="skCatPickBtn"
+                aria-haspopup="true" aria-expanded="false">
+          <span id="skCatPickLabel">…</span><span class="catpick-caret">▾</span>
+        </button>
+        <div class="catpick-menu" id="skCatPickMenu" role="listbox"
+             aria-multiselectable="true"
+             aria-label="Spend categories in the flow chart"></div>
+      </div>
+      <div class="catpick" id="skMerchPick">
+        <button type="button" class="catpick-btn" id="skMerchPickBtn"
+                aria-haspopup="true" aria-expanded="false">
+          <span id="skMerchPickLabel">…</span><span class="catpick-caret">▾</span>
+        </button>
+        <div class="catpick-menu" id="skMerchPickMenu" role="listbox"
+             aria-multiselectable="true"
+             aria-label="Merchants in the flow chart"></div>
+      </div>
+      <span class="hint">this month · income in, spend out · ignored rows excluded</span>
+    </div>
+    <div class="panel"><div class="chart-wrap sankey"><canvas id="sankeyChart"></canvas></div></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Spend by category</h2>
+      <span class="hint">this month · click a row to drill down</span>
+    </div>
+    <div class="panel tight" id="catTable"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Transactions</h2>
+      <span class="badge" id="txnCount"></span>
+      <!-- Shared hint (ui.js txnSearchHint — same as the Transactions
+           page): empty unless a non-default sort direction or an extra
+           note is active. -->
+      <span class="hint" id="txnHint"></span>
+    </div>
+    <!-- Same search bar as the Transactions page: one form inside the
+         panel above the table (the Categories rule-panel layout), shared
+         options + wiring in ui.js (wireTxnSearchBar / TXN_SET_BY_OPTIONS).
+         The data path stays client-side — the month window is fetched
+         once and the bar filters it here. -->
+    <div class="panel" id="txnPanel">
+      <form class="rule-form" onsubmit="return false">
+        <!-- Same bar order as the Transactions page (sr1us): "Set by"
+             left of the search input. Options populated from
+             TXN_SET_BY_OPTIONS (ui.js) — one source of truth shared
+             with the Transactions page. -->
+        <select id="setBySel" class="setby-sel" aria-label="Filter rows by who set the category">
+          <option value="all">All</option>
+        </select>
+        <input id="txnSearch" type="text" maxlength="200"
+               placeholder="Keyword, e.g. 'walmart'"
+               aria-label="Search transactions by description">
+      </form>
+      <!-- min-height reserves the list's space before the fetch lands
+           (the panel itself is no longer :empty — the form is a
+           permanent child — so the .panel:empty rule can't do it). -->
+      <div id="txnTable" style="min-height:120px"></div>
+    </div>
+  </section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let curMonth = '';
+let _flowCfg = null; // last chart config, so the view toggle re-draws
+                     // without refetching
+
+/* ------------------------------ money flow (sankey) */
+/* Duplicated from the Overview page on purpose (duplication OK per
+ * sr1us) — the localStorage selection (mercury.sankeySel) is SHARED
+ * across the Overview, Year, Month and Merchants pages, so a picker
+ * toggle on any of them redraws the others. The payload is SCOPED to
+ * the selected month (/api/sankey?month=…) instead of all time. */
+const SK_LS = 'mercury.sankeySel';
+const SK_ALL_OTHER = 'All other'; // node + menu entry for the catch-all
+const SK_DEFAULT_MERCHANTS = 15; // first-visit default: top 15 by debit
+let _skFlows = null; // /api/sankey payload (this month)
+let _skMerchants = null; // /api/sankey-merchants payload (this month)
+let _acctColors = null; // raw account key (source + '\u0000' + account) → color
+
+// Same (source, account) identity makeSankeyChart uses for node keys —
+// two banks can share an account name ("Checking").
+const skAcctKey = f => f.source + '\u0000' + f.account;
+
+function skSaved() {
+  try {
+    const v = localStorage.getItem(SK_LS);
+    if (v === null) return null; // never saved
+    const o = JSON.parse(v);
+    return (o && typeof o === 'object' && !Array.isArray(o)) ? o : null;
+  } catch (e) { return null; }
+}
+function skSave(o) {
+  try { localStorage.setItem(SK_LS, JSON.stringify(o)); } catch (e) {}
+}
+
+/* v1.4.0 saved state has no allOther key — read it as TRUE (the
+ * catch-all is on by default, so a pre-existing selection keeps
+ * rendering the same chart it always did). */
+const skAllOther = o => !o || o.allOther !== false;
+
+/* Account options: every (source, account) in the payload, alphabetical;
+ * duplicate names are disambiguated with the source prefix, mirroring
+ * makeSankeyChart's node labels. [[key, label], …] */
+function skAcctOptions() {
+  const m = new Map();
+  for (const f of _skFlows || []) {
+    const k = skAcctKey(f);
+    if (!m.has(k)) m.set(k, f);
+  }
+  const dups = new Set([...m.values()].map(f => f.account)
+    .filter((n, i, all) => all.indexOf(n) !== i));
+  return [...m.entries()].sort((a, b) =>
+      a[1].account.localeCompare(b[1].account) ||
+      a[1].source.localeCompare(b[1].source))
+    .map(([k, f]) => [k, dups.has(f.account)
+      ? f.source + ' · ' + f.account : f.account]);
+}
+
+/* Category menu: the NET-NEGATIVE (spend) categories as individual
+ * options — per-category DEBIT totals from the payload, debit-spend-
+ * desc with name asc on ties. The picker controls the RIGHT side of
+ * the 3-column flow only: net-positive categories never appear — they
+ * render in full on the left regardless of the selection. The "All
+ * other" catch-all aggregates the net-negative categories that aren't
+ * individually selected. */
+const SK_DEFAULT_CATS = 8; // first-visit default: top 8 by DEBIT spend
+function skCatList() {
+  const debit = {}, net = {};
+  for (const f of _skFlows || []) {
+    debit[f.category] = (debit[f.category] || 0) + (f.debit || 0);
+    net[f.category] = (net[f.category] || 0)
+      + ((f.credit || 0) - (f.debit || 0));
+  }
+  return Object.keys(debit)
+    .filter(c => (net[c] || 0) < 0)
+    .sort((a, b) => debit[b] - debit[a] || a.localeCompare(b));
+}
+
+/* Merchant menu: every merchant with a spend-side debit, sorted by
+ * debit spend desc (name asc on ties). Rows with no effective merchant
+ * or with no debit are skipped. */
+function skMerchList() {
+  const debit = {};
+  for (const f of _skMerchants || []) {
+    if (!f.merchant) continue;
+    debit[f.merchant] = (debit[f.merchant] || 0) + (f.debit || 0);
+  }
+  return Object.keys(debit)
+    .filter(m => debit[m] > 0)
+    .sort((a, b) => debit[b] - debit[a] || a.localeCompare(b));
+}
+
+/* Rebuild both menus from the cached payload + current selection
+ * (called on every render, so rule/import changes reshuffle the
+ * options; idempotent). */
+function skPickers() {
+  const acctOpts = skAcctOptions();
+  const cats = skCatList();
+  const catOpts = cats.map(c => [c, c]);
+  const merchOpts = skMerchList();
+  const merchOptList = merchOpts.map(m => [m, m]);
+  const opts = { accounts: acctOpts.map(o => o[0]),
+                 categories: cats,
+                 merchants: merchOpts };
+  const saved = skSaved();
+  const allOther = skAllOther(saved);
+  const sel = {};
+  for (const which of ['accounts', 'categories', 'merchants']) {
+    if (!opts[which].length) {
+      // Empty scope: nothing to normalize against — keep the stored
+      // list (or none) so a first paint can't burn the default.
+      sel[which] = saved && Array.isArray(saved[which])
+        ? saved[which].filter(x => typeof x === 'string') : [];
+      continue;
+    }
+    // A saved selection is respected as-is (a saved [] stays []),
+    // normalized to names that still exist in the menu; first visit →
+    // accounts = the WHOLE menu, categories = top 8 by DEBIT spend,
+    // merchants = top 15 by DEBIT spend.
+    sel[which] = saved && Array.isArray(saved[which])
+      ? [...new Set(saved[which].filter(
+          x => typeof x === 'string' && opts[which].includes(x)))]
+      : which === 'categories'
+        ? opts.categories.slice(0, SK_DEFAULT_CATS)
+        : which === 'merchants'
+          ? opts.merchants.slice(0, SK_DEFAULT_MERCHANTS)
+          : opts.accounts.slice();
+  }
+  // Persist the default once real data exists (stable across reloads);
+  // skip on a first paint with no data so it can't pre-empt imports.
+  if (saved !== null || opts.accounts.length || opts.categories.length
+      || opts.merchants.length)
+    skSave({ accounts: sel.accounts, categories: sel.categories,
+             merchants: sel.merchants, allOther });
+  paintSkPicker('accounts', acctOpts, sel.accounts, allOther);
+  paintSkPicker('categories', catOpts, sel.categories, allOther);
+  paintSkMerchPicker(merchOptList, sel.merchants);
+  renderSankeyChart();
+}
+
+function paintSkPicker(which, opts, sel, allOther) {
+  const menu = $id(which === 'accounts' ? 'skAcctPickMenu' : 'skCatPickMenu');
+  // The "All other" row is a fixed entry, not data-driven: no key in the
+  // HTML at all (a data-val would round-trip the U+0000-bearing key —
+  // and it has none), just a data-all-other marker + its own handler.
+  menu.innerHTML = opts.map(([v, l], i) => `
+    <label class="catpick-item">
+      <input type="checkbox" data-idx="${i}"
+             ${sel.includes(v) ? 'checked' : ''}>
+      ${which === 'categories'
+        ? `<span class="dot" style="background:${catColor(v)}"></span>` : ''}
+      <span>${esc(l)}</span>
+    </label>`).join('') + (which === 'categories' ? `
+    <label class="catpick-item sk-all-other">
+      <input type="checkbox" data-all-other
+             ${allOther ? 'checked' : ''}>
+      <span class="dot" style="background:${catColor(SK_ALL_OTHER)}"></span>
+      <span>${esc(SK_ALL_OTHER)}</span>
+    </label>` : '');
+  // Keys embed U+0000 (the source/account separator), which the HTML
+  // tokenizer rewrites to U+FFFD inside an attribute string — so the
+  // key is never written into the HTML. The index attribute points
+  // into opts; data-val is assigned via the DOM API (no re-parse),
+  // which keeps the real key inspectable for tests.
+  menu.querySelectorAll('input[data-idx]').forEach((inp, i) => {
+    inp.dataset.val = opts[i][0];
+    inp.addEventListener('change', () => {
+      const val = opts[+inp.dataset.idx][0];
+      const saved = skSaved() || {};
+      // Re-read the stored list (not the closure's snapshot) so rapid
+      // toggles accumulate instead of overwriting each other.
+      const cur = Array.isArray(saved[which])
+        ? saved[which].filter(x => typeof x === 'string') : [];
+      const next = cur.filter(x => x !== val);
+      if (inp.checked) next.push(val);
+      saved[which] = next;
+      skSave(saved);
+      paintSkLabel(which, next, opts, skAllOther(skSaved()));
+      renderSankeyChart();
+    });
+  });
+  const ao = menu.querySelector('input[data-all-other]');
+  if (ao) ao.addEventListener('change', () => {
+    const saved = skSaved() || {};
+    saved.allOther = ao.checked;
+    skSave(saved);
+    paintSkLabel('categories',
+      Array.isArray(saved.categories) ? saved.categories : [],
+      opts, ao.checked);
+    renderSankeyChart();
+  });
+  paintSkLabel(which, sel, opts, allOther);
+}
+
+function paintSkLabel(which, sel, opts, allOther) {
+  const label = v => which === 'accounts'
+    ? (opts.find(o => o[0] === v)?.[1] ?? v) : v;
+  let text;
+  if (which === 'categories' && allOther) {
+    // Catch-all on: the count names how many categories are spelled
+    // out individually; "all other" covers the rest of the payload.
+    text = sel.length
+      ? sel.length + ' + ' + SK_ALL_OTHER.toLowerCase()
+      : SK_ALL_OTHER.toLowerCase();
+  } else {
+    text = !sel.length
+      ? (which === 'accounts' ? 'No accounts' : 'No categories')
+      : sel.length === 1 ? label(sel[0])
+      : sel.length === 2 ? label(sel[0]) + ' + ' + label(sel[1])
+      : sel.length + (which === 'accounts' ? ' accounts' : ' categories');
+  }
+  $id(which === 'accounts' ? 'skAcctPickLabel' : 'skCatPickLabel')
+    .textContent = text;
+}
+
+function paintSkMerchLabel(sel, total) {
+  let text;
+  text = !total
+    ? 'No merchants'
+    : !sel.length
+      ? SK_ALL_OTHER.toLowerCase()
+      : sel.length >= total
+        ? sel.length + ' merchants'
+        : sel.length + ' + ' + SK_ALL_OTHER.toLowerCase();
+  $id('skMerchPickLabel').textContent = text;
+}
+
+/* Merchant picker: a search box on top of the checkbox list, so any
+ * merchant can be found and picked (beyond the top-15 default). The
+ * menu rebuilds on every render (data change) — the search text
+ * resets with it, which is correct for a fresh payload. */
+function paintSkMerchPicker(opts, sel) {
+  const menu = $id('skMerchPickMenu');
+  menu.innerHTML = `
+    <input class="catpick-search" type="search" placeholder="Search merchants…"
+           aria-label="Search merchants">
+    <div class="catpick-list">` + opts.map(([v, l], i) => `
+    <label class="catpick-item" data-idx="${i}">
+      <input type="checkbox" data-idx="${i}"
+             ${sel.includes(v) ? 'checked' : ''}>
+      <span>${esc(l)}</span>
+    </label>`).join('') + `
+    </div>`;
+  menu.querySelectorAll('input[data-idx]').forEach(inp => {
+    inp.dataset.val = opts[+inp.dataset.idx][0];
+    inp.addEventListener('change', () => {
+      const val = opts[+inp.dataset.idx][0];
+      const saved = skSaved() || {};
+      // Re-read the stored list (not the closure's snapshot) so rapid
+      // toggles accumulate instead of overwriting each other.
+      const cur = Array.isArray(saved.merchants)
+        ? saved.merchants.filter(x => typeof x === 'string') : [];
+      const next = cur.filter(x => x !== val);
+      if (inp.checked) next.push(val);
+      saved.merchants = next;
+      skSave(saved);
+      paintSkMerchLabel(next, opts.length);
+      renderSankeyChart();
+    });
+  });
+  const search = menu.querySelector('.catpick-search');
+  const list = menu.querySelector('.catpick-list');
+  const norm = s => s.toLowerCase().replace(/\s+/g, ' ').trim();
+  search.addEventListener('input', () => {
+    const q = norm(search.value);
+    list.querySelectorAll('.catpick-item').forEach(item => {
+      const label = item.querySelector('span').textContent;
+      item.style.display = !q || norm(label).includes(q) ? '' : 'none';
+    });
+  });
+  search.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      search.value = '';
+      search.dispatchEvent(new Event('input'));
+      e.stopPropagation();
+    }
+  });
+  paintSkMerchLabel(sel, opts.length);
+}
+
+function wireSkPickers() {
+  const pickers = [
+    { btn: $id('skAcctPickBtn'), menu: $id('skAcctPickMenu') },
+    { btn: $id('skCatPickBtn'), menu: $id('skCatPickMenu') },
+    { btn: $id('skMerchPickBtn'), menu: $id('skMerchPickMenu') },
+  ];
+  const close = p => {
+    p.menu.style.display = 'none';
+    p.btn.setAttribute('aria-expanded', 'false');
+  };
+  pickers.forEach((p, i) => {
+    p.btn.addEventListener('click', e => {
+      e.stopPropagation();
+      // Computed, not inline, style: the menu's initial inline display
+      // is empty (CSS says none), so the inline check misfires on
+      // click one (catTrend note).
+      const open = getComputedStyle(p.menu).display !== 'none';
+      if (!open) pickers.forEach((o, j) => { if (j !== i) close(o); });
+      p.menu.style.display = open ? 'none' : 'block';
+      p.btn.setAttribute('aria-expanded', String(!open));
+    });
+    p.menu.addEventListener('click', e => e.stopPropagation());
+  });
+  document.addEventListener('click', () => pickers.forEach(close));
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') pickers.forEach(close);
+  });
+}
+
+/* The chart over the cached payload, restricted to the pickers'
+ * selections. The picker controls the RIGHT side only: individually
+ * selected net-negative (spend) categories keep their own nodes, and
+ * with the "All other" catch-all on, every remaining net-negative
+ * category aggregates into a single "All other" node — one flow per
+ * account (that account's summed debit into the bucket) — so
+ * toggling an individual box moves its SPEND between the node and
+ * the bucket. The bucket is always "debit payload − individually
+ * selected". Each category is classified by its NET position across
+ * the whole payload: net positive → left (credit flows only), net
+ * negative → right (debit flows only), net zero → not shown at all.
+ * The opposite-sign flow of a classified category is not rendered —
+ * the chart is a left-to-right flow, and a flow into the left column
+ * (or out of the right column) would break the 3-column structure.
+ * Edges are oriented for the 3-column layout: credit flows run
+ * category → account (left → middle), debit flows run account →
+ * category (middle → right). The CREDIT side always renders in full
+ * — no filtering, no bucket — so a net-positive category appears on
+ * the left regardless of the picker. */
+function renderSankeyChart() {
+  const saved = skSaved() || {};
+  const a = new Set(Array.isArray(saved.accounts) ? saved.accounts : []);
+  const indiv = new Set(Array.isArray(saved.categories)
+    ? saved.categories : []);
+  const allOther = skAllOther(saved);
+  // Net per category across the whole payload (before the account
+  // filter — the side a category sits on must not depend on which
+  // accounts are picked).
+  const net = {};
+  for (const f of _skFlows || [])
+    net[f.category] = (net[f.category] || 0)
+      + ((f.credit || 0) - (f.debit || 0));
+  const flows = [];
+  const bucket = new Map();
+  for (const f of _skFlows || []) {
+    const k = skAcctKey(f);
+    if (!a.has(k)) continue;
+    const d = f.debit || 0, c = f.credit || 0;
+    const n = net[f.category] || 0;
+    if (n < 0 && d > 0) {
+      if (indiv.has(f.category))
+        flows.push({ from: k, to: f.category, flow: d });
+      else if (allOther) {
+        const b = bucket.get(k) || { source: f.source, account: f.account,
+                                      amount: 0 };
+        b.amount += d;
+        bucket.set(k, b);
+      }
+      // unchecked with the catch-all off: hidden (the picker's
+      // explicit intent — same as a spend category today)
+    }
+    if (n > 0 && c > 0)
+      flows.push({ from: f.category, to: k, flow: c });
+  }
+  if (allOther)
+    for (const b of bucket.values())
+      flows.push({ from: skAcctKey(b), to: SK_ALL_OTHER, flow: b.amount });
+  // Merchant column: each rendered spend category (or the "All
+  // other" category bucket) fans out to its effective merchants. Only
+  // the spend side — income categories never show merchants. Rows
+  // with no effective merchant render no merchant edge (the category
+  // still renders). Individually selected merchants render as their
+  // own nodes; every other merchant aggregates into a single "All
+  // other" merchant node (keyed with the same \u0001 prefix) — the
+  // bucket is per source node (named category or the category
+  // catch-all), mirroring how the named merchants fan out.
+  const merchKey = m => '\u0001' + m;
+  const knownMerch = new Set(skMerchList());
+  const merchSel = new Set(Array.isArray(saved.merchants)
+    ? saved.merchants.filter(x => typeof x === 'string' && knownMerch.has(x))
+    : []);
+  const bucketMerch = new Map(); // source node → amount
+  for (const f of _skMerchants || []) {
+    if (!f.merchant) continue;
+    const k = skAcctKey(f);
+    if (!a.has(k)) continue;
+    const d = f.debit || 0;
+    if (d <= 0) continue;
+    const n = net[f.category] || 0;
+    if (n >= 0) continue; // spend side only
+    const src = indiv.has(f.category)
+      ? f.category
+      : (allOther ? SK_ALL_OTHER : null);
+    if (!src) continue; // unchecked with the catch-all off
+    if (merchSel.has(f.merchant))
+      flows.push({ from: src, to: merchKey(f.merchant), flow: d });
+    else
+      bucketMerch.set(src, (bucketMerch.get(src) || 0) + d);
+  }
+  for (const [src, amt] of bucketMerch)
+    flows.push({ from: src, to: merchKey(SK_ALL_OTHER), flow: amt });
+  // Distinguish "nothing in the data" from "the filters hid it":
+  // credit always renders, so zero flows means no accounts selected,
+  // or every spend category unchecked with the catch-all off on
+  // accounts that have no credit either.
+  makeSankeyChart($id('sankeyChart'), flows,
+    !(_skFlows || []).length ? 'no transactions yet'
+      : !a.size ? 'pick at least one account'
+      : 'pick at least one spend category or "All other"',
+    _acctColors);
+}
+
+window.onDataChanged = () => renderMonth(curMonth);
+
+/* Description search + "Set by" dropdown on the "Transactions"
+ * table — the SAME bar as the Transactions page (shared options, wiring
+ * and hint logic in ui.js). Search matching is the category-rule
+ * semantics (case-insensitive partial substring on whitespace-normalized
+ * text), so the visible rows are exactly the rows a rule with the typed
+ * pattern would catch. The Set-by filter narrows by who set the row's
+ * effective category (txnSetByMatch) — same vocabulary as the "Set by"
+ * column. Shown-count lives in the badge next to the h2; the hint only
+ * carries the non-default sort direction (idle: the sort nudge). */
+function updateTxnChrome() {
+  const table = $id('txnTable');
+  const q = ($id('txnSearch').value || '').trim();
+  const by = $id('setBySel').value || 'all';
+  $id('txnCount').textContent = (q || by !== 'all')
+    ? (table._lastShown ?? 0) + ' of ' + (table._lastTotal ?? 0) + ' shown'
+    : (table._lastTotal ?? 0) + ' transactions';
+  $id('txnHint').textContent = txnSearchHint(q, table._sortState);
+}
+
+/* Shared bar wiring (ui.js wireTxnSearchBar — same as the Transactions
+ * page). Client-side: the month window is already loaded, so no debounce;
+ * the table re-renders directly. _detailRender routes header-sort clicks
+ * through the chrome update too, so the hint tracks the sort state. */
+$id('setBySel').innerHTML = TXN_SET_BY_OPTIONS.map(([v, l]) =>
+  `<option value="${v}">${l}</option>`).join('');
+wireTxnSearchBar($id('txnSearch'), $id('setBySel'),
+  ({ q, setBy }) => {
+    const table = $id('txnTable');
+    table._search = q;
+    table._setBy = setBy;
+    renderTxnTable(table);
+    updateTxnChrome();
+  });
+$id('txnTable')._detailRender = () => {
+  renderTxnTable($id('txnTable'));
+  updateTxnChrome();
+};
+
+/* Calendar weeks (Mon–Sun) overlapping the month, clipped to it.
+ * Returns [{week: 'YYYY-MM-DD' (Monday), label: 'Sep 1–7', ...}]. */
+function monthWeeks(month) {
+  const [y, m] = month.split('-').map(Number);
+  const first = Date.UTC(y, m - 1, 1);
+  const last = Date.UTC(y, m, 0); // 0th of next month = last day of m
+  let start = first;
+  start -= ((new Date(first).getUTCDay() + 6) % 7) * 86400000; // back to Monday
+  const out = [];
+  const f = ms => { const d = new Date(ms); return MONTHS_SHORT[d.getUTCMonth()] + ' ' + d.getUTCDate(); };
+  while (start <= last) {
+    const end = start + 6 * 86400000;
+    const a = Math.max(start, first);
+    const b = Math.min(end, last);
+    out.push({ week: new Date(start).toISOString().slice(0, 10),
+               label: a === b ? f(a) : f(a) + '–' + f(b) });
+    start += 7 * 86400000;
+  }
+  return out;
+}
+
+async function renderMonth(month) {
+  curMonth = month;
+  const [weeklyRes, cats, txns, sum, accts, skFlows, skMerchants] =
+    await Promise.all([
+    api('/api/weekly?month=' + encodeURIComponent(month) + '&by_category=true'),
+    api('/api/categories?month=' + encodeURIComponent(month)),
+    api('/api/transactions?month=' + encodeURIComponent(month) + '&limit=5000'),
+    api('/api/summary?month=' + encodeURIComponent(month)),
+    api('/api/accounts'),
+    api('/api/sankey?month=' + encodeURIComponent(month)),
+    api('/api/sankey-merchants?month=' + encodeURIComponent(month)),
+  ]);
+  _acctColors = new Map(accts.map(a => [a.source + '\u0000' + a.account, a.color]));
+  _skFlows = skFlows || [];
+  _skMerchants = skMerchants || [];
+  const weekly = weeklyRes.weeks;
+
+  // Summary cards from the complete weekly aggregates.
+  const income = weekly.reduce((a, w) => a + w.income, 0);
+  const spend = weekly.reduce((a, w) => a + w.spend, 0);
+  const net = income - spend;
+  const rate = income > 0 ? (net / income * 100).toFixed(1) + '%' : '—';
+  $id('monthCards').innerHTML = [
+    ['Income', fmtMoney(income), 'income'],
+    ['Spent', fmtMoney(spend), 'spend'],
+    ['Net', fmtMoney(net), net >= 0 ? 'income' : 'spend'],
+    ['Savings rate', rate, ''],
+  ].map(([l, v, c]) =>
+    `<div class="card"><div class="label">${l} · ${monthLong(month)}</div><div class="value ${c}">${v}</div></div>`).join('');
+
+  // Weekly chart: merge calendar buckets with the API rows.
+  const weeks = monthWeeks(month);
+  const byWeek = Object.fromEntries(weekly.map(w => [w.week, w]));
+  makeFlowChart($id('flowChart'), _flowCfg = {
+    labels: weeks.map(w => w.label),
+    keys: weeks.map(w => w.week),
+    spend: weeks.map(w => (byWeek[w.week] || {}).spend || 0),
+    income: weeks.map(w => (byWeek[w.week] || {}).income || 0),
+    byCategory: (weeklyRes.flow_by_category || []).map(r =>
+      ({ key: r.bucket, category: r.category,
+         spend: r.spend, income: r.income })),
+    modeKey: 'month',
+  });
+  $id('chartHint').textContent = `${monthLong(month)} · Mon–Sun weeks, clipped to the month`;
+
+  renderCategoryTable($id('catTable'), cats, { month });
+  skPickers();
+
+  mountTxnTable($id('txnTable'), txns);
+  updateTxnChrome();
+  setPageRange(sum.first_date, sum.last_date, txnCountText(sum, 'no transactions in ' + monthLong(month)));
+}
+
+(async function init() {
+  renderChrome('month');
+  // Reserve the cards section height before the fetch so the page
+  // doesn't jump when the data lands (renderMonthCards replaces them).
+  $id('monthCards').innerHTML = skelCards(4, 'value');
+  CATS = await api('/api/standard-categories');
+  wireFlowToggle('flowSeg',
+    () => { if (_flowCfg) makeFlowChart($id('flowChart'), _flowCfg); });
+  wireSkPickers();
+  const periods = await api('/api/periods');
+  const sel = $id('monthSel');
+  const navigate = v => location.href = '/month?month=' + v;
+  if (!periods.months.length) {
+    // No data: swap the skeletons for a compact note (emptyHint explains),
+    // and drop the whole "Weekly cash flow" section so the fixed-height
+    // .chart-wrap doesn't leave 320px of dead space. The pager buttons
+    // still get wired — an empty select disables both.
+    $id('monthCards').innerHTML = '<p class="empty">No data yet.</p>';
+    $id('emptyHint').style.display = 'block';
+    $id('flowChart').closest('section').style.display = 'none';
+    $id('sankeyChart').closest('section').style.display = 'none';
+    wirePeriodNav({ sel, navigate,
+      prevBtn: $id('monthPrev'), nextBtn: $id('monthNext') });
+    return;
+  }
+  // Newest first.
+  sel.innerHTML = periods.months.slice().reverse()
+    .map(m => `<option value="${m}">${monthLabel(m)}</option>`).join('');
+  const requested = getParam('month');
+  sel.value = requested && periods.months.includes(requested)
+    ? requested : periods.months[periods.months.length - 1];
+  sel.onchange = () => navigate(sel.value);
+  // ‹ › buttons + ArrowLeft/ArrowRight step through the months that have
+  // data; a button is disabled at the ends of the range.
+  wirePeriodNav({ sel, navigate,
+    prevBtn: $id('monthPrev'), nextBtn: $id('monthNext') });
+  try {
+    await renderMonth(sel.value);
+  } catch (e) {
+    toast('Failed to load: ' + e.message, 8000);
+  }
+})();
+</script>
+{% endblock %}
