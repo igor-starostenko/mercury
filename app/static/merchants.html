@@ -77,6 +77,11 @@
       <h2>Match merchants</h2>
       <span class="badge" id="mrShownCount" aria-live="polite"></span>
       <button class="primary" id="mrClassifyBtn" onclick="runMerchantClassify()">Classify unknown (LLM)</button>
+      <!-- Live batch progress while a classify run is in flight (ui.js classifyStatusTick). -->
+      <span class="classify-progress" id="classifyProgress" hidden>
+        <span class="classify-progress-track"><span class="classify-progress-fill" id="classifyProgressFill"></span></span>
+        <span class="classify-progress-text" id="classifyProgressText"></span>
+      </span>
       <span class="hint" id="mrHint"></span>
     </div>
     <div class="panel" id="mrPanel">
@@ -891,6 +896,7 @@ async function addMrRule(e) {
 async function runMerchantClassify() {
   await withBusyButton('mrClassifyBtn', 'Classifying…', async () => {
     toast('Classifying…');
+    startClassifyStatusPolling();
     try {
       const res = await api('/api/merchants/classify', { method: 'POST' });
       toast(`Classified ${res.classified} (${res.skipped} skipped)`);

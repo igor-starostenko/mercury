@@ -622,12 +622,29 @@ function ensureClassifyPollInterval() {
   _classifyPollTimer = setInterval(classifyStatusTick, 2000);
 }
 
+/* Render the live batch-progress pill from /api/classify/status. Hidden
+ * when no run is in flight. */
+function updateClassifyProgress(res) {
+  const el = $id('classifyProgress');
+  if (!el) return;
+  if (!res || !res.running) { el.hidden = true; return; }
+  const total = res.total_unknown || 0;
+  const done = (res.classified || 0) + (res.skipped || 0);
+  const pct = total > 0 ? Math.min(100, Math.round(100 * done / total)) : 0;
+  const fill = $id('classifyProgressFill');
+  const text = $id('classifyProgressText');
+  if (fill) fill.style.width = pct + '%';
+  if (text) text.textContent =
+    `Batch ${res.batches_done || 0}/${res.total_batches || 1} · ${done}/${total} classified`;
+  el.hidden = false;
+}
+
 async function classifyStatusTick() {
   if (document.visibilityState !== 'visible') return;
   let shouldPoll = true;
   try { shouldPoll = typeof _classifyShouldPoll === 'function' ? _classifyShouldPoll() : true; }
   catch (e) { shouldPoll = true; }
-  if (!shouldPoll) { stopClassifyStatusPolling(); return; }
+  if (!shouldPoll) { stopClassifyStatusPolling(); updateClassifyProgress(null); return; }
   let res;
   try { res = await api('/api/classify/status'); }
   catch (e) { return; } // keep last known state
@@ -637,6 +654,7 @@ async function classifyStatusTick() {
       && window.onDataChanged) {
     setTimeout(onDataChanged, 400); // run just finished — refresh
   }
+  updateClassifyProgress(res);
   applyClassifyButtonState();
   // Keep polling only while a run is in flight; stop otherwise. If the page
   // was idle when the run started elsewhere, this tick is the only signal —
@@ -677,6 +695,7 @@ async function withBusyButton(id, busyText, fn) {
 async function runClassify() {
   await withBusyButton('classifyBtn', 'Classifying…', async () => {
     toast('Classifying…');
+    startClassifyStatusPolling();
     try {
       const res = await api('/api/classify', { method: 'POST' });
       toast(`Classified ${res.classified} of ${res.of}`);
