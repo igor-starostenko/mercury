@@ -1,6 +1,6 @@
-"""Mercury web server.
+"""Mercury API server.
 
-Serves the static analytics dashboard and a small JSON API backed by DuckDB.
+JSON API backed by DuckDB for the NiceGUI frontend (app/nicegui_app.py).
 Local-only: binds to 127.0.0.1.
 
 Data enters exclusively through POST /api/upload (CSVs picked in the UI);
@@ -14,18 +14,14 @@ import re
 import threading
 import time
 from contextlib import asynccontextmanager, contextmanager
-from pathlib import Path
 
 import duckdb
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import ingest, analytics, llm, rules, merchants, date_ignores, imports, scoped_sankey
 
 DB_PATH = ingest.DB_PATH
-STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 MAX_UPLOAD_FILES = 200
 MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
@@ -1087,42 +1083,6 @@ def delete_date_ignore(ignore_id: int):
         return {"deleted": ignore_id}
     finally:
         con.close()
-
-
-# ---------------------------------------------------------------------------
-# Static UI
-# ---------------------------------------------------------------------------
-@app.get("/")
-def index():
-    return FileResponse(STATIC_DIR / "index.html")
-
-
-@app.get("/year")
-def year_page():
-    return FileResponse(STATIC_DIR / "year.html")
-
-
-@app.get("/categories")
-def categories_page():
-    return FileResponse(STATIC_DIR / "categories.html")
-
-
-@app.get("/merchants")
-def merchants_page():
-    return FileResponse(STATIC_DIR / "merchants.html")
-
-
-@app.get("/transactions")
-def transactions_page():
-    return FileResponse(STATIC_DIR / "transactions.html")
-
-
-@app.get("/month")
-def month_page():
-    return FileResponse(STATIC_DIR / "month.html")
-
-
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/api/health")
