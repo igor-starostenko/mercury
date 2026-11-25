@@ -43,7 +43,7 @@
   <section class="section">
     <div class="section-head">
       <h2>Merchants</h2>
-      <span class="hint">all time · click a row to drill down · rename, recolor or remove</span>
+      <span class="hint">all time · click a row to drill down · reassign per transaction · rename, recolor or remove</span>
       <span class="badge" id="merchCount" aria-live="polite"></span>
     </div>
     <div class="panel tight" id="merchTable"></div>
@@ -656,7 +656,7 @@ function renderMerchantTable(data) {
             encodeURIComponent(merchant) + '&limit=500');
           txnBox._txns = txns;
           txnBox._sortState = { key: 'date', dir: 'desc' };
-          txnBox._editable = false;
+          txnBox._editable = 'merchant';
           renderTxnTable(txnBox);
           txnBox._detailRender = null;
         } catch (e) {
