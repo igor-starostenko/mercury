@@ -8,6 +8,14 @@
  * window.onDataChanged, which each page sets to its own re-render.
  */
 
+/* Delayed re-render after a mutation: each page sets
+ * window.onDataChanged to its own re-render; a short timeout lets the
+ * mutation settle before the re-fetch. Single choke point so every
+ * component refreshes the same way. */
+function refreshSoon(delay = 400) {
+  if (window.onDataChanged) setTimeout(window.onDataChanged, delay);
+}
+
 let CATS = []; // standard category names, filled by each page's init
 
 /* Theme-aware color for canvas charts: read the active scheme's token at
@@ -37,8 +45,26 @@ function skelCards(n, kind) {
   return Array.from({ length: n }, () => skelCard(kind)).join('');
 }
 
+/* The "No transactions yet" hint used to be hand-copied into every page's
+ * <main>. Now injected by renderChrome so there is one copy of the markup. */
+function ensureEmptyHint() {
+  if ($id('emptyHint')) return;
+  const main = document.querySelector('main');
+  if (!main) return;
+  const panel = document.createElement('div');
+  panel.className = 'panel';
+  panel.id = 'emptyHint';
+  panel.style.cssText = 'display:none;margin-bottom:24px';
+  panel.innerHTML = `<h2 style="margin:0 0 8px;font-size:16px">No transactions yet</h2>
+    <p style="color:var(--muted);margin:0">Use <b>Manage Imports</b> in the top bar to load
+    your bank exports (Wells Fargo, Chase, Apple Card, US Bank) — and later to rename
+    or delete any import. Files are matched by filename — keep the bank's original names.</p>`;
+  main.insertBefore(panel, main.firstChild);
+}
+
 /* ------------------------------------------------------------- page chrome */
 function renderChrome(active) {
+  ensureEmptyHint();
   $id('site-header').innerHTML = `
     <header>
       <div class="brand">
@@ -302,7 +328,7 @@ async function uploadFiles(list) {
   } catch (e) {
     toast('Import failed: ' + e.message, 8000);
   }
-  if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  refreshSoon();
   if (_importsOpen) setTimeout(refreshImports, 500);
 }
 
@@ -379,7 +405,7 @@ async function importWithBanks() {
   } catch (e) {
     toast('Import failed: ' + e.message, 8000);
   }
-  if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  refreshSoon();
   if (_importsOpen) setTimeout(refreshImports, 500);
 }
 function closeUpload() {
@@ -499,7 +525,7 @@ async function saveImportRename(i, cell) {
       body: JSON.stringify({ account: acct }),
     });
     toast(`Renamed to “${acct}” — ${im.n} transaction${im.n === 1 ? '' : 's'} re-labeled`);
-    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+    refreshSoon();
   } catch (e) {
     toast('Rename failed: ' + e.message, 5000);
   }
@@ -522,7 +548,7 @@ async function deleteImportRow(btn) {
       (im.source ? '?source=' + encodeURIComponent(im.source) : ''),
       { method: 'DELETE' });
     toast(`Import deleted — ${r.rows} transaction${r.rows === 1 ? '' : 's'} removed, rules untouched`);
-    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+    refreshSoon();
   } catch (e) {
     toast('Delete failed: ' + e.message, 5000);
     if (tr) tr.style.opacity = '';
@@ -542,7 +568,7 @@ async function onImportColor(input) {
       body: JSON.stringify({ color: input.value }),
     });
     toast('Account color updated');
-    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+    refreshSoon();
   } catch (e) {
     toast('Color change failed: ' + e.message, 5000);
   }
@@ -560,7 +586,7 @@ async function resetImportColor(btn) {
       body: JSON.stringify({ color: null }),
     });
     toast('Account color reset to the bank default');
-    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+    refreshSoon();
   } catch (e) {
     toast('Reset failed: ' + e.message, 5000);
   }
@@ -635,7 +661,7 @@ async function classifyStatusTick() {
   window._classifyServerRunning = !!res.running;
   if (was === true && window._classifyServerRunning === false
       && window.onDataChanged) {
-    setTimeout(onDataChanged, 400); // run just finished — refresh
+    refreshSoon(); // run just finished — refresh
   }
   applyClassifyButtonState();
   // Keep polling only while a run is in flight; stop otherwise. If the page
@@ -689,7 +715,7 @@ async function runClassify() {
       }
     }
   });
-  if (window.onDataChanged) setTimeout(onDataChanged, 400);
+  refreshSoon();
 }
 
 /* -------------------------------------------------------------- flow chart */
@@ -1768,7 +1794,7 @@ async function deleteTxn(id, btn) {
   try {
     await api('/api/transactions/' + id, { method: 'DELETE' });
     toast('Transaction deleted');
-    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+    refreshSoon();
   } catch (e) {
     toast('Delete failed: ' + e.message, 5000);
     if (btn) btn.closest('tr').style.opacity = '';
@@ -1793,7 +1819,7 @@ function wireMerchantInputs(root) {
           body: JSON.stringify({ ids: [+inp.dataset.id], merchant: val || null }),
         });
         toast(val ? 'Merchant updated' : 'Merchant cleared');
-        if (window.onDataChanged) setTimeout(onDataChanged, 400);
+        refreshSoon();
       } catch (e) {
         toast('Update failed: ' + e.message, 5000);
       }
@@ -1812,7 +1838,7 @@ function wireCategorySelects(root) {
           body: JSON.stringify({ ids: [+sel.dataset.id], category: sel.value }),
         });
         toast('Category updated');
-        if (window.onDataChanged) setTimeout(onDataChanged, 400);
+        refreshSoon();
       } catch (e) {
         toast('Update failed: ' + e.message, 5000);
       }
@@ -1984,7 +2010,7 @@ async function reorderRules(orderedIds) {
     });
     _rulesOrder = orderedIds;
     toast('Rule order updated');
-    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+    refreshSoon();
   } catch (err) {
     toast('Reorder failed: ' + err.message + ' — order restored', 5000);
     if (_rulesDataCache) {
@@ -2157,7 +2183,7 @@ async function addDateIgnore(e) {
     $id('dateIgStart').value = '';
     $id('dateIgEnd').value = '';
     toast('Date ignore added');
-    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+    refreshSoon();
   } catch (err) {
     toast('Could not add date ignore: ' + err.message, 5000);
   }
@@ -2167,7 +2193,7 @@ async function deleteDateIgnore(id) {
   try {
     await api('/api/date-ignores/' + id, { method: 'DELETE' });
     toast('Date ignore deleted');
-    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+    refreshSoon();
   } catch (err) {
     toast('Delete failed: ' + err.message, 5000);
   }
@@ -2187,7 +2213,7 @@ async function addIgnoreRule(e) {
     toast('Ignore rule added' + (scope.source || scope.account
       ? ' (scoped: ' + [scope.source, scope.account].filter(Boolean).join(' · ') + ')'
       : ''));
-    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+    refreshSoon();
   } catch (err) {
     toast('Could not add ignore rule: ' + err.message, 5000);
   }
@@ -2208,7 +2234,7 @@ async function addRule(e) {
     toast('Rule added' + (scope.source || scope.account
       ? ' (scoped: ' + [scope.source, scope.account].filter(Boolean).join(' · ') + ')'
       : ''));
-    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+    refreshSoon();
   } catch (err) {
     toast('Could not add rule: ' + err.message, 5000);
   }
@@ -2218,7 +2244,7 @@ async function deleteRule(id) {
   try {
     await api('/api/rules/' + id, { method: 'DELETE' });
     toast('Rule deleted');
-    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+    refreshSoon();
   } catch (err) {
     toast('Delete failed: ' + err.message, 5000);
   }
@@ -2236,7 +2262,7 @@ async function updateRuleCategory(id, category) {
       body: JSON.stringify({ category }),
     });
     toast('Rule now assigns ' + category);
-    if (window.onDataChanged) setTimeout(onDataChanged, 400);
+    refreshSoon();
   } catch (err) {
     toast('Could not update rule: ' + err.message, 5000);
     if (_rulesDataCache) {
