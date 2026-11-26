@@ -1,0 +1,92 @@
+{# Shared Jinja2 macros for the Mercury pages — one definition per
+   duplicated panel/component so pages stay small and consistent. #}
+
+{# "No transactions yet" empty-state panel. `message` may contain HTML
+   (callers pass markup via caller()). #}
+{% macro empty_hint() %}
+<div class="panel" id="emptyHint" style="display:none;margin-bottom:24px">
+  <h2 style="margin:0 0 8px;font-size:16px">No transactions yet</h2>
+  <p style="color:var(--muted);margin:0">{{ caller() }}</p>
+</div>
+{% endmacro %}
+
+{# The catpick (multiselect dropdown) shell used for the sankey
+   pickers and the Categories trend picker. `id_prefix` is e.g.
+   'skAcct' — renders #skAcctPick / #skAcctPickBtn / #skAcctPickLabel /
+   #skAcctPickMenu. #}
+{% macro catpick(id_prefix, aria_label) %}
+<div class="catpick" id="{{ id_prefix }}Pick">
+  <button type="button" class="catpick-btn" id="{{ id_prefix }}PickBtn"
+          aria-haspopup="true" aria-expanded="false">
+    <span id="{{ id_prefix }}PickLabel">…</span><span class="catpick-caret">▾</span>
+  </button>
+  <div class="catpick-menu" id="{{ id_prefix }}PickMenu" role="listbox"
+       aria-multiselectable="true" aria-label="{{ aria_label }}"></div>
+</div>
+{% endmacro %}
+
+{# The "Money Flow" sankey section: 3 catpicks + canvas. `hint` is the
+   scope note (all time / this month / this year). #}
+{% macro sankey_section(hint) %}
+<section class="section">
+  <div class="section-head">
+    <h2>Money Flow</h2>
+    {{ catpick('skAcct', 'Accounts in the flow chart') }}
+    {{ catpick('skCat', 'Spend categories in the flow chart') }}
+    {{ catpick('skMerch', 'Merchants in the flow chart') }}
+    <span class="hint">{{ hint }}</span>
+  </div>
+  <div class="panel"><div class="chart-wrap sankey"><canvas id="sankeyChart"></canvas></div></div>
+</section>
+{% endmacro %}
+
+{# Spend by category panel (all pages with the catTable). #}
+{% macro cat_table_section(hint) %}
+<section class="section">
+  <div class="section-head">
+    <h2>Spend by category</h2>
+    <span class="hint">{{ hint }}</span>
+  </div>
+  <div class="panel tight" id="catTable"></div>
+</section>
+{% endmacro %}
+
+{# By-category / Totals segmented toggle (flow charts). `key` is the
+   data-key (overview | month | year). #}
+{% macro flow_seg(key) %}
+<div class="seg" id="flowSeg" data-key="{{ key }}" role="group" aria-label="Chart view">
+  <button type="button" data-mode="category">By category</button>
+  <button type="button" data-mode="totals">Totals</button>
+</div>
+{% endmacro %}
+
+{# Full-width canvas chart panel. `canvas_id` is the canvas id;
+   `sankey` adds the .sankey chart-wrap variant. #}
+{% macro chart_panel(canvas_id, sankey=false) %}
+<div class="panel"><div class="chart-wrap{% if sankey %} sankey{% endif %}"><canvas id="{{ canvas_id }}"></canvas></div></div>
+{% endmacro %}
+
+{# Period toolbar for the Year/Month pages (prev / select / next +
+   back-to-overview link). #}
+{% macro period_toolbar(label, sel_id, prev_id, next_id) %}
+<section class="section">
+  <div class="toolbar">
+    <label for="{{ sel_id }}">{{ label }}</label>
+    <button type="button" id="{{ prev_id }}" class="period-nav" aria-label="Previous {{ label|lower }}">‹</button>
+    <select id="{{ sel_id }}"></select>
+    <button type="button" id="{{ next_id }}" class="period-nav" aria-label="Next {{ label|lower }}">›</button>
+    <span class="spacer"></span>
+    <a href="/" style="color:var(--muted);font-size:13px">← back to overview</a>
+  </div>
+</section>
+{% endmacro %}
+
+{# Live batch-progress indicator (transactions + merchants classify
+   runs). Ids must be unique per page — the two pages are never on the
+   same document. #}
+{% macro classify_progress() %}
+<span class="classify-progress" id="classifyProgress" hidden>
+  <span class="classify-progress-track"><span class="classify-progress-fill" id="classifyProgressFill"></span></span>
+  <span class="classify-progress-text" id="classifyProgressText"></span>
+</span>
+{% endmacro %}

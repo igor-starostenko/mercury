@@ -1,14 +1,10 @@
 {% extends "base.html" %}
+{% from '_macros.html' import empty_hint, classify_progress %}
 
 {% block title %}Mercury — Transactions{% endblock %}
 
 {% block content %}
-  <div class="panel" id="emptyHint" style="display:none;margin-bottom:24px">
-    <h2 style="margin:0 0 8px;font-size:16px">No transactions yet</h2>
-    <p style="color:var(--muted);margin:0">Use <b>Manage Imports</b> in the top bar to load
-    your bank exports (Wells Fargo, Chase, Apple Card, US Bank) — and later to rename
-    or delete any import. Files are matched by filename — keep the bank's original names.</p>
-  </div>
+  {% call empty_hint() %}Use <b>Manage Imports</b> in the top bar to load your bank exports (Wells Fargo, Chase, Apple Card, US Bank) — and later to rename or delete any import. Files are matched by filename — keep the bank's original names.{% endcall %}
 
   <section class="section">
     <div class="section-head">
@@ -24,10 +20,7 @@
         </div>
         <button class="primary" id="classifyBtn" onclick="runClassify()">Classify unknown (LLM)</button>
         <!-- Live batch progress while a classify run is in flight (ui.js classifyStatusTick). -->
-        <span class="classify-progress" id="classifyProgress" hidden>
-          <span class="classify-progress-track"><span class="classify-progress-fill" id="classifyProgressFill"></span></span>
-          <span class="classify-progress-text" id="classifyProgressText"></span>
-        </span>
+        {{ classify_progress() }}
         <!-- Shared hint (ui.js txnSearchHint): empty unless a non-default
              sort direction or an extra note is active. -->
         <span class="hint" id="ovHint"></span>
