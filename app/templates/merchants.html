@@ -1,44 +1,12 @@
 {% extends "base.html" %}
+{% from '_macros.html' import sankey_section, classify_progress %}
 
 {% block title %}Mercury — Merchants{% endblock %}
 
 {% block vendored %}<script src="/static/vendor/chartjs-chart-sankey.min.js"></script>{% endblock %}
 
 {% block content %}
-  <section class="section">
-    <div class="section-head">
-      <h2>Money Flow</h2>
-      <div class="catpick" id="skAcctPick">
-        <button type="button" class="catpick-btn" id="skAcctPickBtn"
-                aria-haspopup="true" aria-expanded="false">
-          <span id="skAcctPickLabel">…</span><span class="catpick-caret">▾</span>
-        </button>
-        <div class="catpick-menu" id="skAcctPickMenu" role="listbox"
-             aria-multiselectable="true"
-             aria-label="Accounts in the flow chart"></div>
-      </div>
-      <div class="catpick" id="skCatPick">
-        <button type="button" class="catpick-btn" id="skCatPickBtn"
-                aria-haspopup="true" aria-expanded="false">
-          <span id="skCatPickLabel">…</span><span class="catpick-caret">▾</span>
-        </button>
-        <div class="catpick-menu" id="skCatPickMenu" role="listbox"
-             aria-multiselectable="true"
-             aria-label="Spend categories in the flow chart"></div>
-      </div>
-      <div class="catpick" id="skMerchPick">
-        <button type="button" class="catpick-btn" id="skMerchPickBtn"
-                aria-haspopup="true" aria-expanded="false">
-          <span id="skMerchPickLabel">…</span><span class="catpick-caret">▾</span>
-        </button>
-        <div class="catpick-menu" id="skMerchPickMenu" role="listbox"
-             aria-multiselectable="true"
-             aria-label="Merchants in the flow chart"></div>
-      </div>
-      <span class="hint">all time · income in, spend out · ignored rows excluded</span>
-    </div>
-    <div class="panel"><div class="chart-wrap sankey"><canvas id="sankeyChart"></canvas></div></div>
-  </section>
+  {{ sankey_section('all time · income in, spend out · ignored rows excluded') }}
 
   <section class="section">
     <div class="section-head">
@@ -65,10 +33,7 @@
       <span class="badge" id="mrShownCount" aria-live="polite"></span>
       <button class="primary" id="mrClassifyBtn" onclick="runMerchantClassify()">Classify unknown (LLM)</button>
       <!-- Live batch progress while a classify run is in flight (ui.js classifyStatusTick). -->
-      <span class="classify-progress" id="classifyProgress" hidden>
-        <span class="classify-progress-track"><span class="classify-progress-fill" id="classifyProgressFill"></span></span>
-        <span class="classify-progress-text" id="classifyProgressText"></span>
-      </span>
+      {{ classify_progress() }}
       <span class="hint" id="mrHint"></span>
     </div>
     <div class="panel" id="mrPanel">

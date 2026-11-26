@@ -1,27 +1,20 @@
 {% extends "base.html" %}
+{% from '_macros.html' import empty_hint, sankey_section, cat_table_section, flow_seg, chart_panel %}
 
 {% block title %}Mercury — Overview{% endblock %}
 
 {% block vendored %}<script src="/static/vendor/chartjs-chart-sankey.min.js"></script>{% endblock %}
 
 {% block content %}
-  <div class="panel" id="emptyHint" style="display:none;margin-bottom:24px">
-    <h2 style="margin:0 0 8px;font-size:16px">No transactions yet</h2>
-    <p style="color:var(--muted);margin:0">Use <b>Manage Imports</b> in the top bar to load
-    your bank exports (Wells Fargo, Chase, Apple Card, US Bank) — and later to rename
-    or delete any import. Files are matched by filename — keep the bank's original names.</p>
-  </div>
+  {% call empty_hint() %}Use <b>Manage Imports</b> in the top bar to load your bank exports (Wells Fargo, Chase, Apple Card, US Bank) — and later to rename or delete any import. Files are matched by filename — keep the bank's original names.{% endcall %}
 
   <section class="section">
     <div class="section-head">
       <h2>Cash flow by month</h2>
-      <div class="seg" id="flowSeg" data-key="overview" role="group" aria-label="Chart view">
-        <button type="button" data-mode="category">By category</button>
-        <button type="button" data-mode="totals">Totals</button>
-      </div>
+      {{ flow_seg('overview') }}
       <span class="hint">all time · lines: trailing 12-month average · click a bar for the month view</span>
     </div>
-    <div class="panel"><div class="chart-wrap"><canvas id="flowChart"></canvas></div></div>
+    {{ chart_panel('flowChart') }}
   </section>
 
   <section class="section">
@@ -37,48 +30,9 @@
     <div class="panel tight" id="accounts"></div>
   </section>
 
-  <section class="section">
-    <div class="section-head">
-      <h2>Money Flow</h2>
-      <div class="catpick" id="skAcctPick">
-        <button type="button" class="catpick-btn" id="skAcctPickBtn"
-                aria-haspopup="true" aria-expanded="false">
-          <span id="skAcctPickLabel">…</span><span class="catpick-caret">▾</span>
-        </button>
-        <div class="catpick-menu" id="skAcctPickMenu" role="listbox"
-             aria-multiselectable="true"
-             aria-label="Accounts in the flow chart"></div>
-      </div>
-      <div class="catpick" id="skCatPick">
-        <button type="button" class="catpick-btn" id="skCatPickBtn"
-                aria-haspopup="true" aria-expanded="false">
-          <span id="skCatPickLabel">…</span><span class="catpick-caret">▾</span>
-        </button>
-        <div class="catpick-menu" id="skCatPickMenu" role="listbox"
-             aria-multiselectable="true"
-             aria-label="Spend categories in the flow chart"></div>
-      </div>
-      <div class="catpick" id="skMerchPick">
-        <button type="button" class="catpick-btn" id="skMerchPickBtn"
-                aria-haspopup="true" aria-expanded="false">
-          <span id="skMerchPickLabel">…</span><span class="catpick-caret">▾</span>
-        </button>
-        <div class="catpick-menu" id="skMerchPickMenu" role="listbox"
-             aria-multiselectable="true"
-             aria-label="Merchants in the flow chart"></div>
-      </div>
-      <span class="hint">all time · income in, spend out · ignored rows excluded</span>
-    </div>
-    <div class="panel"><div class="chart-wrap sankey"><canvas id="sankeyChart"></canvas></div></div>
-  </section>
+  {{ sankey_section('all time · income in, spend out · ignored rows excluded') }}
 
-  <section class="section">
-    <div class="section-head">
-      <h2>Spend by category</h2>
-      <span class="hint">all time · click a row to drill down</span>
-    </div>
-    <div class="panel tight" id="catTable"></div>
-  </section>
+  {{ cat_table_section('all time · click a row to drill down') }}
 
   <section class="section">
     <div class="section-head">
